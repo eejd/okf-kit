@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>okf — knowledge browser</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="vendor/purify.min.js"></script>
+  <script src="vendor/marked.min.js"></script>
+  <script src="vendor/cytoscape.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1 id="title">okf</h1>
+    <input id="search" placeholder="search concepts…" autocomplete="off">
+    <select id="type-filter" title="filter by type"></select>
+    <button id="graph-btn" title="toggle graph view">◉ graph</button>
+  </header>
+  <main>
+    <aside id="tree"><div class="muted">loading…</div></aside>
+    <section id="reader"><div id="concept" class="muted">select a concept</div></section>
+    <section id="graph-view" hidden><div id="cy"></div></section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

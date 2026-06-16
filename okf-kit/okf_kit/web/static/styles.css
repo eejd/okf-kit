@@ -1,0 +1,50 @@
+:root {
+  --bg: #0f172a;
+  --panel: #111c33;
+  --panel-2: #0b1426;
+  --ink: #e2e8f0;
+  --muted: #64748b;
+  --accent: #2563eb;
+  --line: #1e293b;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--ink); display: flex; flex-direction: column;
+}
+header {
+  display: flex; gap: 10px; align-items: center; padding: 8px 12px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+}
+header h1 { font-size: 14px; margin: 0; color: var(--muted); font-weight: 600; white-space: nowrap; }
+header input { flex: 1; background: var(--panel-2); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+header select, header button { background: var(--panel-2); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+header button:hover { border-color: var(--accent); }
+main { flex: 1; display: grid; grid-template-columns: 280px 1fr; min-height: 0; }
+aside#tree, section#reader, section#graph-view { overflow: auto; padding: 12px; }
+aside#tree { background: var(--panel); border-right: 1px solid var(--line); }
+.group { color: var(--muted); text-transform: uppercase; font-size: 11px; letter-spacing: .05em; margin: 12px 4px 4px; }
+.leaf { padding: 4px 8px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+.leaf:hover { background: var(--panel-2); }
+.leaf.active { background: var(--accent); color: #fff; }
+.leaf .t { color: var(--muted); font-size: 11px; }
+.leaf.active .t { color: #c7d2fe; }
+#concept h1 { margin: 0 0 4px; }
+.meta { color: var(--muted); margin-bottom: 12px; }
+.body { margin-top: 12px; max-width: 80ch; }
+.body h1, .body h2 { border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.body table { border-collapse: collapse; }
+.body th, .body td, table.fm th, table.fm td { border: 1px solid var(--line); padding: 4px 8px; }
+.body code, .body pre { background: var(--panel-2); border-radius: 4px; }
+.body code { padding: 1px 4px; }
+.body pre { padding: 8px; overflow: auto; }
+.body a { color: #60a5fa; }
+table.fm { border-collapse: collapse; margin: 8px 0; }
+table.fm th { color: var(--muted); text-align: left; background: var(--panel-2); }
+.links { margin-top: 14px; color: var(--muted); }
+.links a { color: #60a5fa; }
+.warn { color: #fbbf24; }
+.muted { color: var(--muted); }
+section#graph-view { padding: 0; }
+#cy { width: 100%; height: 100%; }
