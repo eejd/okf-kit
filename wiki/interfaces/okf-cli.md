@@ -1,24 +1,35 @@
 ---
 type: Interface
 title: okf CLI
-description: 'The okf command: init, new, validate, search, read, index regen, serve.'
+description: 'The `okf` CLI — a thin argparse layer over the core: init / new / validate
+  / search / read / index / serve.'
 ---
 # Overview
 
-The `okf` CLI is a thin argparse layer over [`okf_kit.core`](/architecture.md). It is the primary way humans and scripts build and inspect a bundle: scaffold a new bundle, create concepts from type templates, validate conformance, search, read concepts with progressive context, regenerate per-directory index files, and launch the web UI.
+The `okf` command-line interface (`okf_kit/cli.py`) is a thin presentation layer over [the core](/architecture/overview.md). It scaffolds bundles, creates concepts, validates, searches, reads (with progressive context), regenerates indexes, and serves the web UI. There is no business logic here — each subcommand parses args and calls one core function.
 
-Build commands produce thin stubs fast; for rich, agent-mediated authoring use the MCP `create_concept` tool, which enforces a richness floor. The CLI mirrors the core one-to-one, so there is no duplicated logic between the CLI, the MCP server, and the web UI — they all call the same functions.
+# Definition
 
-# Schema
+Subcommands:
 
-| command | purpose |
-|---|---|
-| `okf init <dir>` | scaffold a bundle |
-| `okf new <b> <type> <id>` | create a concept from a template |
-| `okf validate <b>` | SPEC 9 conformance |
-| `okf search <b> <q>` | full-text search |
-| `okf read <b> <id> --depth N` | progressive context |
-| `okf index regen <b>` | regenerate index.md files |
-| `okf serve <b>` | read-only web UI |
+- **`init <dir>`** — scaffold a bundle root (`--okf-version`, `--name`).
+- **`new <bundle> <type> <path>`** — create a concept from a type template (`--title`, `--desc`, `--tag` repeatable).
+- **`validate <bundle>`** — SPEC §9 conformance; `--json` for a machine report. Exit 1 on errors, 0 otherwise.
+- **`search <bundle> <query>`** — full-text search; `--type` / `--tag` filters, `--limit`, `--json`.
+- **`read <bundle> <concept_id>`** — read a concept; `--depth` for the neighborhood, `--token-budget`.
+- **`index regen <bundle>`** — regenerate per-directory `index.md` files.
+- **`serve <bundle>`** — launch the read-only web UI (`--host`, `--port`).
 
-Related: [okf-mcp](/interfaces/okf-mcp.md), [`core/build`](/core/build.md).
+Exit codes: `0` success, `1` conformance errors, `2` usage / not-found / IO errors. `ConceptNotFound` prints a "did you mean" hint.
+
+# Examples
+
+```bash
+uv run okf init mykb --name "My KB"
+uv run okf new mykb Table tables/users --title "Users" --desc "User accounts."
+uv run okf validate mykb
+uv run okf read mykb tables/users --depth 1
+uv run okf index regen mykb
+```
+
+The MCP server exposes the same core as agent tools — see [okf-mcp](/interfaces/okf-mcp.md); the browser UI is [okf serve](/interfaces/okf-serve.md). Tool docs stay in sync across `--help`, MCP descriptions, and the `reference/tools` wiki concept — see [Tool doc sync](/conventions/tool-doc-sync.md).

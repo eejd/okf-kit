@@ -68,6 +68,33 @@ def test_make_server_registers_all_tools(tmp_path: Path):
         assert tool.description and len(tool.description) > 30  # agent-triggerable
 
 
+def test_make_server_publishes_argument_metadata_and_annotations(tmp_path: Path):
+    server = make_server({"kb": _bundle(tmp_path)})
+    tools = {t.name: t for t in asyncio.run(server.list_tools())}
+
+    search_schema = tools["search"].inputSchema
+    assert search_schema["properties"]["query"]["description"].startswith("Search terms")
+    assert search_schema["properties"]["limit"]["minimum"] == 1
+    assert search_schema["properties"]["limit"]["maximum"] == 100
+    assert tools["search"].annotations.readOnlyHint is True
+    assert tools["search"].annotations.openWorldHint is False
+
+    read_schema = tools["read_concept"].inputSchema
+    assert read_schema["properties"]["concept_id"]["pattern"]
+    assert read_schema["properties"]["depth"]["maximum"] == 5
+    assert tools["read_concept"].annotations.readOnlyHint is True
+
+    create_schema = tools["create_concept"].inputSchema
+    assert "Substantive Markdown body" in create_schema["properties"]["body"]["description"]
+    assert "cid" in create_schema["required"]
+    assert tools["create_concept"].annotations.readOnlyHint is False
+    assert tools["create_concept"].annotations.destructiveHint is False
+
+    init_tool = tools["init_bundle"]
+    assert init_tool.annotations.destructiveHint is True
+    assert init_tool.annotations.idempotentHint is True
+
+
 def test_make_server_registers_okf_resources(tmp_path: Path):
     server = make_server({"kb": _bundle(tmp_path)})
     resources = asyncio.run(server.list_resources())

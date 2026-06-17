@@ -1,19 +1,25 @@
 ---
 type: Module
-title: core/search
-description: Inverted-index full-text search with weighted ranking.
+title: core/search — full-text ranking
+description: A dependency-free inverted index with weighted ranking (title > tag >
+  type > description > body) and type/tag filters; deterministic order.
 ---
 # Overview
 
-`build_index(root)` tokenizes every non-reserved concept's title, description, tags, type, and body into a lightweight inverted index. `search(index, q, type, tag, limit)` ranks hits by an exact-title boost plus weighted term frequency: title counts most, then tags, type, description, and body. Results include a snippet with match context.
+`okf_kit/core/search.py` is full-text search over a bundle (REQ-CONS-14..17, REQ-SRCH-01..04) with **no external dependencies**. It builds a lightweight per-field inverted index over non-reserved concepts and ranks with field weights, returning a deterministic order (score desc, then cid asc). A future BM25/IDF ranker can swap in behind the same `search` signature.
 
-Ranking is intentionally simple and dependency-free; a future BM25 or vector ranker can swap in behind the same signature. Ordering is deterministic — score descending, then cid ascending — so results are reproducible. Search is the cheap first step of [progressive context](/concepts/progressive-context.md): it returns only ids, titles, types, and snippets, never full bodies.
+# Definition
 
-# Examples
+- **`build_index(root)`** — for each concept, tokenize (`[a-z0-9]+`) the title, tags, type, description, and body into separate `Counter`s. Reserved files are excluded.
+- **`search(index, q, type=None, tag=None, limit=20)`** — rank every doc, optionally filtered by exact `type` / `tag` sets. An empty `q` returns all concepts (post-filter) by cid.
 
-```
-okf search mykb churn --type Metric --limit 10
-okf search mykb "customer orders" --json
-```
+Ranking (`_score`):
 
-Consumed by [okf-mcp](/interfaces/okf-mcp.md) and [okf serve](/interfaces/okf-serve.md).
+- An **exact title match** adds a large boost (`_EXACT_TITLE_BOOST = 100`).
+- Each query term contributes a weighted term-frequency sum: title×5, tag×4, type×3, description×2, body×1.
+
+A hit is a `Hit(cid, title, type, snippet, score)`; the snippet centers on the first matched term with `…` ellipses.
+
+# API
+
+This is the cheap first step of [Progressive context](/architecture/progressive-context.md) — the hit list an agent reads before [context module](/core/context.md) loads bodies. The web search endpoint and the MCP `search` tool both call it. Filters populate from distinct `type` / `tag` values across the bundle.

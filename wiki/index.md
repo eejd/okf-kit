@@ -2,11 +2,12 @@
 okf_version: '0.1'
 ---
 
-# Overview
-* [Architecture](architecture.md) - okf-kit is one pure Python core exposed as a CLI, an MCP server, and a web UI.
-* [OKF format](okf-format.md) - An OKF bundle is a directory of Markdown concepts (YAML frontmatter + body) linked into a graph.
-
 # Subdirectories
-* [concepts](concepts/index.md)
+* [architecture](architecture/index.md)
+* [conventions](conventions/index.md)
 * [core](core/index.md)
+* [format](format/index.md)
+* [guides](guides/index.md)
 * [interfaces](interfaces/index.md)
+* [project](project/index.md)
+* [reference](reference/index.md)

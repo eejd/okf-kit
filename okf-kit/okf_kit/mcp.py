@@ -7,16 +7,19 @@ as five tools — ``search``, ``read_concept``, ``validate``, ``create_concept``
 wrappers over :mod:`okf_kit.core`; the bundle is registered at startup by
 directory name.
 
-Tool descriptions are the agent trigger surface (design §11); ``docs/tools.md``
-is the source of truth and a test asserts they stay in sync.
+Tool descriptions are the agent trigger surface (design §11); the
+``wiki/reference/tools.md`` concept is the source of truth and a test asserts
+they stay in sync.
 """
 from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from okf_kit.core import context as context_mod
 from okf_kit.core.links import iter_concept_files
@@ -26,54 +29,150 @@ from okf_kit.core.templates import create_concept, init_bundle
 from okf_kit.core.validate import validate_bundle
 
 _SEARCH_DESC = (
-    "Full-text search across an OKF bundle over title/description/body/tags/type. "
-    "Returns ranked hits (exact title > frontmatter > body) with a snippet. Use this "
-    "FIRST to discover concepts — it returns only id/title/type/snippet/score (no full "
-    "bodies), the cheap entry point of progressive context loading. Narrow with type[]/tag[]. "
-    "Params: bundle (registered bundle name), query, type[] (optional), tag[] (optional), "
-    "limit (default 20). Example: search(bundle='analytics', query='customer churn', "
-    "type=['Metric','Table'])."
+    "Discover OKF concepts without loading full bodies. Searches title, description, body, "
+    "tags, and type, then returns ranked hits with cid/title/type/snippet/score. Use this "
+    "before read_concept when you do not already know the concept id, and narrow with "
+    "type[] or tag[] when the bundle is large. Empty query lists concepts after filters. "
+    "Example: search(bundle='analytics', query='customer churn', type=['Metric','Table'])."
 )
 
 _READ_DESC = (
-    "Read one OKF concept by id (bundle-relative path without .md, e.g. 'tables/users'): "
-    "returns frontmatter + Markdown body. Set depth=0 (default) for just this concept; set "
-    "depth=1..N to progressively expand the N-hop neighborhood — the concept plus concepts it "
-    "links to via Markdown links, concatenated in BFS order within token_budget "
-    "(default 8000). This is the progressive-context loader: start at depth 0, raise depth only "
-    "if you need surrounding context; a trailing marker names any neighbors omitted. Params: "
-    "bundle, concept_id, depth, token_budget. Example: read_concept(bundle='analytics', "
+    "Read a concept by id, or progressively load its linked neighborhood. depth=0 returns "
+    "only that concept's raw frontmatter plus Markdown body. depth=1..N returns the seed in "
+    "full plus Markdown-linked neighbors in deterministic BFS order within token_budget; a "
+    "trailing marker names omitted neighbors. Start at depth=0, then increase depth only when "
+    "the answer needs surrounding context. Example: read_concept(bundle='analytics', "
     "concept_id='metrics/churn', depth=1)."
 )
 
 _VALIDATE_DESC = (
     "Validate an OKF bundle against v0.1 conformance (SPEC §9). Returns "
-    "{conformant, errors, warnings, info}. Errors (missing frontmatter, empty type, malformed "
-    "reserved files) block conformance; warnings (missing recommended fields, broken links); "
-    "info (unknown types, extension keys, nested sub-bundle markers, okf_version). Permissive — "
-    "never rejects for missing optional fields/unknown types. Use before publishing or in CI. "
-    "Params: bundle. Example: validate(bundle='analytics')."
+    "{conformant, errors, warnings, info}. Errors such as missing frontmatter, invalid "
+    "frontmatter, or empty type block conformance. Warnings such as missing title/description, "
+    "invalid cids, and broken links are non-blocking. Info includes extension keys, nested "
+    "sub-bundle markers, okf_version state, and empty bundles. Use after authoring and before "
+    "publishing or CI. Example: validate(bundle='analytics')."
 )
 
 _CREATE_DESC = (
-    "Create a rich OKF concept (MCP authoring). ENFORCES A RICHNESS FLOOR: the "
-    "body must be >=120 words AND contain a depth section heading (# Examples / "
-    "# Schema / # API / # Citations / # Steps / # Definition / # Overview). Thin "
-    "bodies are REJECTED with a message saying what is missing — enrich and "
-    "retry. This is why anything created via MCP has good information by "
-    "construction. Params: bundle (registered name), cid (concept id, e.g. "
-    "'tables/users'), type, title, description, body (Markdown), tags (optional "
-    "list). Example: create_concept(bundle='wiki', cid='core/parse', "
-    "type='Module', title='core/parse', description='Frontmatter parsing.', "
-    "body='...at least 120 words with an # Examples section...')."
+    "Create one substantive OKF concept. Use after searching/reading nearby concepts so the "
+    "new page is specific, linked, and non-duplicative. The body must be >=120 words and "
+    "include at least one depth heading: # Overview, # Definition, # Schema, # Endpoints, "
+    "# API, # Steps, # Examples, or # Citations. Write concrete Markdown with relevant "
+    "headings, examples, caveats, and bundle-relative links such as [Users](/tables/users.md); "
+    "do not create placeholders or generic filler. Returns the created cid and path; rejects "
+    "thin bodies, invalid ids, path escapes, and existing files."
 )
 
 _INIT_DESC = (
-    "Initialize (or re-initialize) an OKF bundle root: writes index.md declaring "
-    "okf_version. Idempotent — use it to (re)create a bundle before authoring "
-    "concepts via create_concept. Params: bundle (registered name), okf_version "
-    "(default '0.1'). Example: init_bundle(bundle='wiki')."
+    "Initialize a registered OKF bundle root by writing root index.md with okf_version. "
+    "Creates the directory if needed and rewrites index.md if it already exists, so use it "
+    "before authoring a new bundle or when intentionally resetting the root index metadata. "
+    "Example: init_bundle(bundle='wiki')."
 )
+
+BundleName = Annotated[
+    str,
+    Field(
+        min_length=1,
+        description=(
+            "Registered bundle name. When okf-mcp is launched from the CLI, this is the "
+            "bundle directory name."
+        ),
+    ),
+]
+SearchQuery = Annotated[
+    str,
+    Field(
+        description=(
+            "Search terms. Use an empty string only when you intentionally want to list all "
+            "concepts after applying filters."
+        )
+    ),
+]
+TypeFilter = Annotated[
+    list[str] | None,
+    Field(description="Optional exact type filters, for example ['Table', 'Metric']."),
+]
+TagFilter = Annotated[
+    list[str] | None,
+    Field(description="Optional exact tag filters. A concept matches if it has any listed tag."),
+]
+SearchLimit = Annotated[
+    int,
+    Field(ge=1, le=100, description="Maximum number of hits to return."),
+]
+ConceptId = Annotated[
+    str,
+    Field(
+        min_length=1,
+        pattern=r"^[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$",
+        description=(
+            "Bundle-relative concept id without .md, such as 'tables/users'. Segments must "
+            "match [A-Za-z0-9_][A-Za-z0-9_.-]*."
+        ),
+    ),
+]
+Depth = Annotated[
+    int,
+    Field(
+        ge=0,
+        le=5,
+        description="Neighborhood depth. Use 0 for one concept; increase only when links matter.",
+    ),
+]
+TokenBudget = Annotated[
+    int,
+    Field(
+        ge=500,
+        le=50000,
+        description=(
+            "Approximate token budget for depth>0 context. The seed concept is always included "
+            "in full; neighbors may be omitted."
+        ),
+    ),
+]
+ConceptType = Annotated[
+    str,
+    Field(
+        min_length=1,
+        description=(
+            "Concept type stored in frontmatter. Built-ins include Table, Metric, Runbook, "
+            "Playbook, and API; custom types are allowed."
+        ),
+    ),
+]
+ConceptTitle = Annotated[
+    str,
+    Field(min_length=1, description="Human-readable title for the concept frontmatter."),
+]
+ConceptDescription = Annotated[
+    str,
+    Field(
+        min_length=1,
+        description="One-sentence, specific summary used in search results and indexes.",
+    ),
+]
+ConceptBody = Annotated[
+    str,
+    Field(
+        min_length=1,
+        description=(
+            "Substantive Markdown body, not a stub. Must be >=120 words and include at least "
+            "one accepted depth heading (# Overview, # Definition, # Schema, # Endpoints, "
+            "# API, # Steps, # Examples, or # Citations). Prefer concrete facts, examples, "
+            "relationships, caveats, and bundle-relative Markdown links to related concepts."
+        ),
+    ),
+]
+Tags = Annotated[
+    list[str] | None,
+    Field(description="Optional short tags for filtering and discovery."),
+]
+OkfVersion = Annotated[
+    str,
+    Field(description="OKF version to write in root index.md frontmatter.", min_length=1),
+]
 
 
 class BundleRegistry:
@@ -96,11 +195,11 @@ class BundleRegistry:
 
 def tool_search(
     reg: BundleRegistry,
-    bundle: str,
-    query: str,
-    type: list[str] | None = None,
-    tag: list[str] | None = None,
-    limit: int = 20,
+    bundle: BundleName,
+    query: SearchQuery,
+    type: TypeFilter = None,
+    tag: TagFilter = None,
+    limit: SearchLimit = 20,
 ) -> list[dict[str, Any]]:
     index = build_index(reg.get(bundle))
     return [_hit_dict(h) for h in search(index, query, type=type, tag=tag, limit=limit)]
@@ -108,17 +207,17 @@ def tool_search(
 
 def tool_read_concept(
     reg: BundleRegistry,
-    bundle: str,
-    concept_id: str,
-    depth: int = 0,
-    token_budget: int = 8000,
+    bundle: BundleName,
+    concept_id: ConceptId,
+    depth: Depth = 0,
+    token_budget: TokenBudget = 8000,
 ) -> str:
     return context_mod.read_concept(
         reg.get(bundle), concept_id, depth=depth, token_budget=token_budget
     )
 
 
-def tool_validate(reg: BundleRegistry, bundle: str) -> dict[str, Any]:
+def tool_validate(reg: BundleRegistry, bundle: BundleName) -> dict[str, Any]:
     return validate_bundle(reg.get(bundle)).to_dict()
 
 
@@ -149,13 +248,13 @@ def _check_richness(body: str) -> None:
 
 def tool_create_concept(
     reg: BundleRegistry,
-    bundle: str,
-    cid: str,
-    type: str,
-    title: str,
-    description: str,
-    body: str,
-    tags: list[str] | None = None,
+    bundle: BundleName,
+    cid: ConceptId,
+    type: ConceptType,
+    title: ConceptTitle,
+    description: ConceptDescription,
+    body: ConceptBody,
+    tags: Tags = None,
 ) -> dict[str, Any]:
     """Create a concept via MCP, enforcing the richness floor.
 
@@ -168,7 +267,9 @@ def tool_create_concept(
     return {"created": True, "cid": cid, "path": str(path)}
 
 
-def tool_init_bundle(reg: BundleRegistry, bundle: str, okf_version: str = "0.1") -> dict[str, Any]:
+def tool_init_bundle(
+    reg: BundleRegistry, bundle: BundleName, okf_version: OkfVersion = "0.1"
+) -> dict[str, Any]:
     """Initialize a bundle root via MCP (idempotent)."""
     path = init_bundle(reg.get(bundle), okf_version=okf_version)
     return {"initialized": True, "path": str(path)}
@@ -179,40 +280,78 @@ def make_server(bundles: dict[str, Any]) -> FastMCP:
     reg = BundleRegistry(bundles)
     server = FastMCP("okf")
 
-    @server.tool(name="search", description=_SEARCH_DESC)
+    @server.tool(
+        name="search",
+        title="Search concepts",
+        description=_SEARCH_DESC,
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+    )
     def _search(
-        bundle: str,
-        query: str,
-        type: list[str] | None = None,
-        tag: list[str] | None = None,
-        limit: int = 20,
+        bundle: BundleName,
+        query: SearchQuery,
+        type: TypeFilter = None,
+        tag: TagFilter = None,
+        limit: SearchLimit = 20,
     ) -> list[dict[str, Any]]:
         return tool_search(reg, bundle, query, type, tag, limit)
 
-    @server.tool(name="read_concept", description=_READ_DESC)
+    @server.tool(
+        name="read_concept",
+        title="Read concept",
+        description=_READ_DESC,
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+    )
     def _read_concept(
-        bundle: str, concept_id: str, depth: int = 0, token_budget: int = 8000
+        bundle: BundleName,
+        concept_id: ConceptId,
+        depth: Depth = 0,
+        token_budget: TokenBudget = 8000,
     ) -> str:
         return tool_read_concept(reg, bundle, concept_id, depth, token_budget)
 
-    @server.tool(name="validate", description=_VALIDATE_DESC)
-    def _validate(bundle: str) -> dict[str, Any]:
+    @server.tool(
+        name="validate",
+        title="Validate bundle",
+        description=_VALIDATE_DESC,
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+    )
+    def _validate(bundle: BundleName) -> dict[str, Any]:
         return tool_validate(reg, bundle)
 
-    @server.tool(name="create_concept", description=_CREATE_DESC)
+    @server.tool(
+        name="create_concept",
+        title="Create concept",
+        description=_CREATE_DESC,
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=False,
+            openWorldHint=False,
+        ),
+    )
     def _create_concept(
-        bundle: str,
-        cid: str,
-        type: str,
-        title: str,
-        description: str,
-        body: str,
-        tags: list[str] | None = None,
+        bundle: BundleName,
+        cid: ConceptId,
+        type: ConceptType,
+        title: ConceptTitle,
+        description: ConceptDescription,
+        body: ConceptBody,
+        tags: Tags = None,
     ) -> dict[str, Any]:
         return tool_create_concept(reg, bundle, cid, type, title, description, body, tags)
 
-    @server.tool(name="init_bundle", description=_INIT_DESC)
-    def _init_bundle(bundle: str, okf_version: str = "0.1") -> dict[str, Any]:
+    @server.tool(
+        name="init_bundle",
+        title="Initialize bundle",
+        description=_INIT_DESC,
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+    )
+    def _init_bundle(bundle: BundleName, okf_version: OkfVersion = "0.1") -> dict[str, Any]:
         return tool_init_bundle(reg, bundle, okf_version)
 
     _register_resources(server, reg)

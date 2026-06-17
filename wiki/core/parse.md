@@ -1,21 +1,19 @@
 ---
 type: Module
-title: core/parse
-description: Split YAML frontmatter from Markdown; parse concepts; serialize (SPEC
-  4.1).
+title: core/parse — frontmatter splitting
+description: split_frontmatter, parse_concept, serialize_concept — permissive frontmatter
+  handling that never raises and round-trips cleanly.
 ---
 # Overview
 
-`split_frontmatter(text)` separates a file's YAML frontmatter from its Markdown body. A valid block opens with `---` on the very first line (no leading whitespace or byte-order mark) and closes with a later `---`. When no block is present, the parser falls back gracefully — empty mapping, whole text as body. When a block is present but the YAML is unparseable or is not a mapping, it records a `frontmatter_error` rather than raising, so the validator can report it.
+`okf_kit/core/parse.py` turns text into `Concept` objects and back. Its defining rule, from SPEC §4.1 / REQ-CONS-01..04: **never raise on malformed input.** A missing block degrades to an empty-mapping concept whose whole text is the body; a present-but-invalid block (non-mapping or unparseable YAML) records a `frontmatter_error` so the validator can report it.
 
-`parse_concept(path, root)` builds a [`Concept`](/core/model.md): cid, frontmatter, body, reserved flag, and parse diagnostics. `serialize_concept` round-trips all frontmatter keys. The parser never raises on malformed input — reporting is the validator's job.
+# Definition
+
+- **`split_frontmatter(text)`** — a valid block opens with `---` on the very first line (no leading whitespace, no BOM) and closes with a later line of exactly `---`. Returns `FrontmatterResult(data, body, present, error)`. An empty block is `present=True, data={}`. Parsing uses `yaml.safe_load` (no arbitrary object instantiation — REQ-CONS-01).
+- **`parse_concept(path, root)`** — stat the file (size-capped by `_MAX_CONCEPT_BYTES`), read UTF-8, split, and build a `Concept` with its `cid` derived from the path. A stat failure or oversize file yields a concept carrying a `frontmatter_error` rather than throwing.
+- **`serialize_concept(concept)`** — the inverse: `yaml.safe_dump` with `sort_keys=False` (order preserved) + body. A concept with no frontmatter serializes body-only, enabling lossless round-trips.
 
 # Examples
 
-```
-from okf_kit.core.parse import parse_concept, split_frontmatter
-res = split_frontmatter("---\ntype: Table\n---\nbody")
-c = parse_concept(path, root)         # -> Concept(cid, frontmatter, body, ...)
-```
-
-Related: [`core/validate`](/core/validate.md), [OKF format](/okf-format.md).
+The "present but empty" vs "absent" distinction is what lets the validator emit `type-empty` only when a block exists. The dataclass that parse produces is [Concept](/core/model.md); the validator that consumes its diagnostics is [validate module](/core/validate.md).

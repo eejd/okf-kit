@@ -60,14 +60,15 @@ the bug.
   document `--help`, pick the right exit code (`0` ok / `1` conformance / `2`
   usage & IO).
 - **An MCP tool** → register it in `okf_kit/mcp.py` and add its canonical
-  description to **`docs/tools.md`** inside a
+  description to the **`wiki/reference/tools.md`** concept inside a
   `<!-- desc:start -->` … `<!-- desc:end -->` block. The
-  `test_tools_md_synced_with_mcp_descriptions` test asserts the doc and the
-  server stay in sync — keep them identical.
+  `test_tool_reference_synced_with_mcp_descriptions` test asserts the wiki
+  reference and the server stay in sync — keep them identical.
 - **A concept-type template** → add a body scaffold to `_BODY_TEMPLATES` in
   `okf_kit/core/templates.py` and the type name to `TEMPLATE_TYPES`.
-- **A doc** → `docs/`; update cross-references. Design decisions go in `_docs/`
-  (spec) and `AGENTS.md` (operational rules).
+- **A doc** → add a concept to the `wiki/` bundle (`okf new` / `create_concept`);
+  update cross-references. Design decisions go in `_docs/` (spec) and `AGENTS.md`
+  (operational rules).
 
 ## Where things live
 
@@ -75,8 +76,8 @@ the bug.
 |---|---|
 | Build rules, structure | `AGENTS.md` |
 | Design & requirements | `_docs/` |
-| Tool reference, guides | `docs/` |
-| Deferred work / known gaps | `docs/backlog.md` |
+| Tool reference, guides | `wiki/` |
+| Deferred work / known gaps | `wiki/project/backlog.md` |
 | Source | `okf-kit/okf_kit/` (`core/`, `cli.py`, `mcp.py`) |
 | Tests | `okf-kit/tests/` |
 | The authoring skill | `okf-kit/skills/okf-author/SKILL.md` |
@@ -85,7 +86,7 @@ the bug.
 
 Non-trivial changes run an adversarial review, and anything crossing the
 security boundary runs a security review, before merge. Record deferred review
-findings in `docs/backlog.md` rather than dropping them.
+findings in the `wiki/project/backlog` concept rather than dropping them.
 
 ## License
 

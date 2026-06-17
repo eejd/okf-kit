@@ -120,7 +120,7 @@ search, progressive-context read, `init`/`new`/`index regen`, the MCP server, th
 `okf-author` skill, and **`okf serve`** — a read-only browser UI (tree, search,
 graph, reader) launched on demand by an agent harness. **Next:** web-UI editing
 (frontmatter form, Markdown editor, link autocomplete, CRUD) and bundle
-import/export. **Later milestones (see `docs/backlog.md`):** producer
+import/export. **Later milestones (see the [`project/backlog`](wiki/project/backlog.md) wiki concept):** producer
 (extract/enrich), governance (RBAC/PII/signing), and multi-bundle federation —
 including the future multi-level `<domain>/<subdomain>` bundles the design
 anticipates. **Git integration** is the only intentionally-deferred Phase-2 item.
@@ -130,8 +130,8 @@ anticipates. **Git integration** is the only intentionally-deferred Phase-2 item
 - [`_docs/requirements.md`](_docs/requirements.md) — full OKF requirements (data model §2–4 authoritative).
 - [`_docs/2026-06-16-okf-plugin-v0.1-design.md`](_docs/2026-06-16-okf-plugin-v0.1-design.md) — v0.1 design & decisions.
 - [`AGENTS.md`](AGENTS.md) — build rules and structure.
-- [`docs/`](docs/) — tool reference, progressive context, URI scheme, authoring guide.
-- [`docs/backlog.md`](docs/backlog.md) — deferred findings and future work.
+- [`wiki/`](wiki/) — the OKF knowledge bundle: tool reference, progressive context, URI scheme, authoring, backlog.
+- [`wiki/project/backlog.md`](wiki/project/backlog.md) — deferred findings and future work.
 
 ## Contributing
 
