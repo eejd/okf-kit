@@ -36,6 +36,21 @@ source .venv/bin/activate    # …or activate once, then use `okf` / `okf-mcp` b
 
 The examples below use `uv run`; drop the prefix if you've activated the venv.
 
+### Install `okf` as a uv tool
+
+To install or reinstall the CLI on this machine from this checkout:
+
+```bash
+uv tool install --force --editable .
+```
+
+This puts `okf` and `okf-mcp` on uv's tool path. Verify with:
+
+```bash
+okf --help
+okf agent install codex --scope project --dry-run
+```
+
 ## Install agent skills
 
 Install the OKF Agent Skills into a project-local agent configuration:
