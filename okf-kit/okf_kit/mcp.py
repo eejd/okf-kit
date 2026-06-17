@@ -169,6 +169,29 @@ Tags = Annotated[
     list[str] | None,
     Field(description="Optional short tags for filtering and discovery."),
 ]
+ConceptResource = Annotated[
+    str | None,
+    Field(
+        description=(
+            "Optional canonical URI of the underlying asset (SPEC §2.3). Omit for "
+            "abstract concepts; e.g. 'bigquery://proj.datasets.ds.tables.users'."
+        )
+    ),
+]
+Timestamp = Annotated[
+    str | None,
+    Field(description="Optional ISO-8601 'last meaningful change' timestamp (SPEC §2.3)."),
+]
+ExtraFrontmatter = Annotated[
+    dict[str, Any] | None,
+    Field(
+        description=(
+            "Optional extra/extension frontmatter keys to write and preserve "
+            "(SPEC §2.3 extension policy). Explicit resource/timestamp args override "
+            "a same-named key here."
+        )
+    ),
+]
 OkfVersion = Annotated[
     str,
     Field(description="OKF version to write in root index.md frontmatter.", min_length=1),
@@ -255,14 +278,31 @@ def tool_create_concept(
     description: ConceptDescription,
     body: ConceptBody,
     tags: Tags = None,
+    resource: ConceptResource = None,
+    timestamp: Timestamp = None,
+    extra: ExtraFrontmatter = None,
 ) -> dict[str, Any]:
     """Create a concept via MCP, enforcing the richness floor.
 
-    Delegates containment + atomic exclusive create to ``core.templates.create_concept``.
+    Forwards all recommended frontmatter (title/description/tags/resource/timestamp)
+    plus arbitrary extension keys (``extra``) to ``core.templates.create_concept``.
+    An explicit ``resource``/``timestamp`` arg overrides a same-named ``extra`` key.
     """
     _check_richness(body)
+    extra_fm: dict[str, Any] = dict(extra) if extra else {}
+    if resource is not None:
+        extra_fm["resource"] = resource
+    if timestamp is not None:
+        extra_fm["timestamp"] = timestamp
     path = create_concept(
-        reg.get(bundle), cid, type, title=title, description=description, tags=tags, body=body
+        reg.get(bundle),
+        cid,
+        type,
+        title=title,
+        description=description,
+        tags=tags,
+        body=body,
+        extra=extra_fm or None,
     )
     return {"created": True, "cid": cid, "path": str(path)}
 
@@ -337,8 +377,13 @@ def make_server(bundles: dict[str, Any]) -> FastMCP:
         description: ConceptDescription,
         body: ConceptBody,
         tags: Tags = None,
+        resource: ConceptResource = None,
+        timestamp: Timestamp = None,
+        extra: ExtraFrontmatter = None,
     ) -> dict[str, Any]:
-        return tool_create_concept(reg, bundle, cid, type, title, description, body, tags)
+        return tool_create_concept(
+            reg, bundle, cid, type, title, description, body, tags, resource, timestamp, extra
+        )
 
     @server.tool(
         name="init_bundle",

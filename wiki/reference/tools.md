@@ -48,7 +48,7 @@ Validate an OKF bundle against v0.1 conformance (SPEC §9). Returns {conformant,
 
 Create a concept **via MCP**. Unlike the CLI's `okf new` (a thin stub), it enforces a **richness floor**: the body must be ≥120 words and contain a depth section. This makes "created via MCP → good info" true by construction.
 
-- **MCP:** `create_concept(bundle, cid, type, title, description, body, tags?) -> {created, cid, path}`
+- **MCP:** `create_concept(bundle, cid, type, title, description, body, tags?, resource?, timestamp?, extra?) -> {created, cid, path}`
 - Containment + atomic exclusive create are inherited from `core/templates.create_concept`.
 
 <!-- desc:start -->

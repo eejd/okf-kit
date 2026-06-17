@@ -16,6 +16,7 @@ dist/
 
 # Local agent/dev tooling (not part of the product)
 .claude/
+.codex/
 
 # OS
 .DS_Store
@@ -23,3 +24,4 @@ dist/
 _docs/
 
 .codemem/
+

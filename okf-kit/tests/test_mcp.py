@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from okf_kit.core.context import ConceptNotFound
+from okf_kit.core.parse import parse_concept
 from okf_kit.mcp import (
     BundleRegistry,
     make_server,
@@ -126,6 +127,25 @@ def test_tool_create_concept_rejects_traversal(tmp_path: Path):
     rich = "# Overview\n\n" + ("word " * 130) + "\n\n# Examples\n\nx\n"
     with pytest.raises(ValueError):
         tool_create_concept(reg, "kb", "../escape", "Table", "T", "d", rich)
+
+
+def test_tool_create_concept_persists_recommended_and_extra_frontmatter(tmp_path: Path):
+    reg = BundleRegistry({"kb": _bundle(tmp_path)})
+    rich = "# Overview\n\n" + ("word " * 130) + "\n"
+    res = tool_create_concept(
+        reg, "kb", "tables/orders", "Table", "Orders", "orders table", rich,
+        resource="bigquery://proj.ds.tables.orders",
+        timestamp="2026-06-17T14:30:00Z",
+        extra={"owner": "data-eng", "pii": True},
+    )
+    assert res["created"] is True
+    # Round-trip through the parser: every recommended + extra field is preserved.
+    fm = parse_concept(tmp_path / "tables" / "orders.md", tmp_path).frontmatter
+    assert fm["type"] == "Table"
+    assert fm["resource"] == "bigquery://proj.ds.tables.orders"
+    assert fm["timestamp"] == "2026-06-17T14:30:00Z"  # quoted on disk, string on parse
+    assert fm["owner"] == "data-eng"
+    assert fm["pii"] is True
 
 
 def test_tool_init_bundle(tmp_path: Path):
