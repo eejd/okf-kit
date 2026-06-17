@@ -126,6 +126,24 @@ Codex with `/mcp` or with:
 codex mcp --help
 ```
 
+For Antigravity, open **Manage MCP Servers** → **View raw config** and add OKF
+to the `mcpServers` object in `mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "okf": {
+      "command": "okf-mcp",
+      "args": ["/absolute/path/to/mykb"]
+    }
+  }
+}
+```
+
+If you have other MCP servers, merge the `okf` entry into the existing
+`mcpServers` object rather than replacing the file. See Antigravity's MCP docs:
+<https://antigravity.google/docs/mcp>.
+
 For Claude Code, add an MCP server config (`.mcp.json`). Point `uv` at this repo
 and at your bundle (absolute paths):
 
