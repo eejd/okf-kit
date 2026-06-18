@@ -2,21 +2,25 @@
 
 Thanks for contributing. This guide covers local setup, the gates every change
 must pass, and the conventions the codebase enforces. The authoritative build
-rules live in [`AGENTS.md`](AGENTS.md); the design rationale in
-[`_docs/`](_docs/).
+rules live in [`AGENTS.md`](AGENTS.md); format, architecture, and backlog docs
+live in the [`wiki/`](wiki/) OKF bundle.
 
 ## Setup
 
 ```bash
-uv sync --extra dev        # Python ≥ 3.12; installs okf, okf-mcp, pytest, ruff, mypy, types-PyYAML
+uv sync --extra dev        # Python >= 3.12; installs CLI, tests, lint, typecheck
 ```
+
+The dev extra also installs Tree-sitter parser dependencies used by
+`okf code index`.
 
 ## The gates (must pass before a change is done)
 
 ```bash
-uv run ruff check okf-kit/okf_kit okf-kit/tests
+uv run ruff check .
 uv run mypy okf-kit/okf_kit              # --strict
-uv run pytest okf-kit/tests
+uv run pytest
+python3 .codex/skills/work-loop/scripts/lint-spec-status.py
 ```
 
 These are the objective completion criteria. Don't move past a failing gate by
@@ -25,11 +29,10 @@ exempt from E501 (test fixtures carry long inline Markdown).
 
 ## How we work: test-first
 
-Core logic is written **TDD** — write the failing test against the SPEC/design
-contract, confirm it's red, then implement to green. The OKF conformance and
-path-handling rules are the kind of invariant that must be pinned by tests; never
-ship core logic without one. Bug fixes start with a failing test that reproduces
-the bug.
+Core logic is written **TDD**: write the failing test against the format,
+conformance, or design contract, confirm it is red, then implement to green. The
+OKF conformance and path-handling rules are invariants and must be pinned by
+tests. Bug fixes start with a failing test that reproduces the bug.
 
 ## Architecture rules
 
@@ -67,20 +70,25 @@ the bug.
 - **A concept-type template** → add a body scaffold to `_BODY_TEMPLATES` in
   `okf_kit/core/templates.py` and the type name to `TEMPLATE_TYPES`.
 - **A doc** → add a concept to the `wiki/` bundle (`okf new` / `create_concept`);
-  update cross-references. Design decisions go in `_docs/` (spec) and `AGENTS.md`
-  (operational rules).
+  update cross-references and regenerate indexes with `uv run okf index regen
+  wiki`. Design notes, format docs, guides, and deferred work live in `wiki/`.
+  Operational rules live in `AGENTS.md`.
+- **A code-indexing change** → keep syntax extraction in `okf_kit/code/`,
+  generated code concepts under `wiki/code*/`, and the agent workflow in
+  `okf_kit/agent_assets/skills/okf-code/SKILL.md`.
 
 ## Where things live
 
 | Concern | Location |
 |---|---|
 | Build rules, structure | `AGENTS.md` |
-| Design & requirements | `_docs/` |
-| Tool reference, guides | `wiki/` |
+| Format and conformance | `wiki/format/` |
+| Architecture | `wiki/architecture/` |
+| Tool reference and guides | `wiki/reference/`, `wiki/interfaces/`, `wiki/guides/` |
 | Deferred work / known gaps | `wiki/project/backlog.md` |
 | Source | `okf-kit/okf_kit/` (`core/`, `cli.py`, `mcp.py`) |
 | Tests | `okf-kit/tests/` |
-| The authoring skill | `okf-kit/skills/okf-author/SKILL.md` |
+| Agent skill assets | `okf-kit/okf_kit/agent_assets/skills/` |
 
 ## Review
 
@@ -91,4 +99,8 @@ findings in the `wiki/project/backlog` concept rather than dropping them.
 ## License
 
 By contributing you agree your contributions are licensed under the MIT
-License (see [`LICENSE`](LICENSE)).
+License (see [`LICENSE`](LICENSE)). okf-kit is an independent implementation of
+the Apache-2.0 licensed Open Knowledge Format specification. Do not copy OKF
+specification text, examples, schemas, sample bundles, or source files into this
+repository without preserving the upstream license and attribution notices. See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
