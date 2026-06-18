@@ -162,6 +162,64 @@ def test_legacy_manifest_migrates_existing_skills_and_adds_new_skill(
     assert ".codex/skills/okf-code/SKILL.md" in data["files"]
 
 
+def test_manifestless_legacy_skill_dry_run_reports_update(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    author = tmp_path / ".codex" / "skills" / "okf-author" / "SKILL.md"
+    code = tmp_path / ".codex" / "skills" / "okf-code" / "SKILL.md"
+    author.parent.mkdir(parents=True)
+    code.parent.mkdir(parents=True)
+    author.write_text("old okf author\n", encoding="utf-8")
+    code.write_text("old okf code\n", encoding="utf-8")
+    author_digest = sha256(author.read_bytes()).hexdigest()
+    code_digest = sha256(code.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        agent_install,
+        "LEGACY_ASSET_DIGESTS",
+        {
+            "okf-author/SKILL.md": frozenset({author_digest}),
+            "okf-code/SKILL.md": frozenset({code_digest}),
+        },
+    )
+
+    actions = install_agent_assets(tmp_path, "codex", scope="project", dry_run=True)
+
+    messages = [action.message for action in actions]
+    assert "would update .codex/skills/okf-author/SKILL.md" in messages
+    assert "would update .codex/skills/okf-code/SKILL.md" in messages
+    assert "would write .codex/skills/okf-search/SKILL.md" in messages
+    assert "would write .codex/okf-agent-assets.json" in messages
+    assert author.read_text(encoding="utf-8") == "old okf author\n"
+    assert code.read_text(encoding="utf-8") == "old okf code\n"
+    assert not manifest_path(tmp_path, "codex", "project").exists()
+
+
+def test_manifestless_legacy_skill_install_rewrites_and_creates_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    skill = tmp_path / ".codex" / "skills" / "okf-author" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("old okf author\n", encoding="utf-8")
+    legacy_digest = sha256(skill.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        agent_install,
+        "LEGACY_ASSET_DIGESTS",
+        {"okf-author/SKILL.md": frozenset({legacy_digest})},
+    )
+
+    actions = install_agent_assets(tmp_path, "codex", scope="project")
+
+    messages = [action.message for action in actions]
+    assert "updated .codex/skills/okf-author/SKILL.md" in messages
+    assert "wrote .codex/skills/okf-search/SKILL.md" in messages
+    assert "wrote .codex/skills/okf-code/SKILL.md" in messages
+    assert "old okf author" not in skill.read_text(encoding="utf-8")
+    manifest = json.loads(manifest_path(tmp_path, "codex", "project").read_text())
+    assert ".codex/skills/okf-author/SKILL.md" in manifest["files"]
+
+
 def test_update_refuses_hash_mismatch_as_unmanaged(tmp_path: Path):
     install_agent_assets(tmp_path, "codex", scope="project")
     skill = tmp_path / ".codex" / "skills" / "okf-author" / "SKILL.md"

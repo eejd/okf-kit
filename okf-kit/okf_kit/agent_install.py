@@ -21,11 +21,17 @@ LEGACY_ASSET_DIGESTS: dict[str, frozenset[str]] = {
         {
             "624c4ef881f783e4a03b6128aca42b9ab04791eb89544b3a7dbd68d35c857b6c",
             "825ea861cab759c0c0100d3903e6554af8b9c10fc5d760969d6cf91c5b40d524",
+            "8dafe09c06ee10fdd00f4318b3d0b3963393dccda4516f76de67a041e2ffe649",
         }
     ),
     "okf-search/SKILL.md": frozenset(
         {
             "3d9e0a1d8a9901092960977a17df77f1869561adde11f262d18ade8e60560e44",
+        }
+    ),
+    "okf-code/SKILL.md": frozenset(
+        {
+            "92b7eb092d31a1309271242f5a409ce9ba7d1d2ae9cbc02586da1bf35fcb00cc",
         }
     ),
 }
@@ -204,15 +210,10 @@ def _plan_actions(
             _preflight_no_symlinks(paths.base, dest)
             if not dest.is_file():
                 raise ValueError(f"unmanaged existing file: {display}")
-            if manifest is None:
-                raise ValueError(f"unmanaged existing file: {display}")
-            recorded = manifest.get(display)
             current = _sha256_file(dest)
-            if (
-                recorded is None
-                or current != recorded
-                or current not in _known_asset_digests(source_asset)
-            ):
+            known_digests = _known_asset_digests(source_asset)
+            recorded = None if manifest is None else manifest.get(display)
+            if current not in known_digests or (manifest is not None and current != recorded):
                 raise ValueError(f"unmanaged existing file: {display}")
             if not update:
                 actions.append(InstallAction("skip", display, f"skipped {display}"))
