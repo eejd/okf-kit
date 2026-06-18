@@ -57,3 +57,24 @@ def test_agent_installer_docs_are_skill_only():
         assert "okf-search" in text, path
         assert "okf-author" in text, path
         assert "does not install subagents" in compact or "no subagents" in compact, path
+
+
+def test_code_index_docs_are_syntax_grounded_and_polyglot():
+    docs = [
+        Path(__file__).resolve().parent.parent.parent / "README.md",
+        WIKI / "interfaces" / "okf-cli.md",
+        WIKI / "guides" / "authoring.md",
+        TOOLS_REFERENCE,
+    ]
+    for path in docs:
+        text = path.read_text(encoding="utf-8")
+        compact = " ".join(text.split()).lower()
+        assert "okf-kit[treesitter]" in text, path
+        assert "okf code index" in text, path
+        assert "python" in compact, path
+        assert "typescript" in compact, path
+        assert "rust" in compact, path
+        assert "go" in compact, path
+        assert "csharp" in compact or "c#" in compact, path
+        assert "php" in compact, path
+        assert "semantic proof" in compact or "semantic impact analysis" in compact, path

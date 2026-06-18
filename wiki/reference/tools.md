@@ -9,7 +9,7 @@ description: Canonical reference for the okf CLI and okf-mcp server — each too
 
 Canonical reference for the `okf` CLI and the `okf-mcp` server. Each tool's **canonical description** — the agent trigger surface — lives in a `<!-- desc:start -->` … `<!-- desc:end -->` block below; the test suite asserts these match the strings embedded in [okf-mcp](/interfaces/okf-mcp.md), so this page and the server never drift (see [Tool doc sync](/conventions/tool-doc-sync.md)).
 
-Most commands operate on a *bundle* — a directory of OKF `.md` concept files. The five MCP tools are `search`, `read_concept` (with `depth` for [progressive context](/architecture/progressive-context.md)), `validate`, `create_concept`, and `init_bundle`; the `okf` CLI mirrors them plus `index regen` and `serve`. The CLI also has a skill-only `agent install` command for installing OKF skills into Claude Code or Codex.
+Most commands operate on a *bundle* — a directory of OKF `.md` concept files. The five MCP tools are `search`, `read_concept` (with `depth` for [progressive context](/architecture/progressive-context.md)), `validate`, `create_concept`, and `init_bundle`; the `okf` CLI mirrors them plus `index regen`, `code index`, and `serve`. The CLI also has a skill-only `agent install` command for installing OKF skills into Claude Code or Codex.
 
 ## search
 
@@ -74,6 +74,7 @@ The CLI builds thin stubs fast (`okf new`) and regenerates indexes; for rich, MC
 | `okf init <dir>` | Scaffold a bundle: root `index.md` with `okf_version`. |
 | `okf new <bundle> <type> <id>` | Create a concept from a type template. |
 | `okf index regen <bundle>` | Regenerate per-directory `index.md` (type-grouped). |
-| `okf agent install <claude-code|codex>` | Install `okf-search` and `okf-author` skills (`--scope project|user`, `--dry-run`, `--update`). Skill-only: no subagents, hooks, MCP config, or plugins. |
+| `okf code index <repo> <bundle>` | Index source code into OKF `CodeModule` concepts for Python, Java, Scala, Rust, Go, Kotlin, Perl, C#, PHP, TypeScript, JavaScript, and HTML; requires `okf-kit[treesitter]`. Syntax-derived impact notes are candidates, not semantic proof. |
+| `okf agent install <claude-code|codex>` | Install or refresh `okf-search`, `okf-author`, and `okf-code` skills (`--scope project|user`, `--dry-run`; `--update` is accepted for compatibility). Skill-only: no subagents, hooks, MCP config, or plugins. |
 
 Exit codes: `0` success, `1` conformance errors, `2` usage / not-found / IO.

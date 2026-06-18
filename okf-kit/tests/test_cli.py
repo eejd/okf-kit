@@ -82,6 +82,98 @@ def test_index_regen(tmp_path: Path, capsys):
     assert (tables / "index.md").exists()
 
 
+def test_code_index_help(capsys):
+    code, out, _ = _run(["code", "index", "--help"], capsys)
+    assert code == 0
+    assert "source code" in out
+    assert "okf-kit[treesitter]" in out
+    assert "--language" in out
+    assert "--update" in out
+    assert "typescript" in out
+    assert "rust" in out
+    assert "go" in out
+    assert "csharp" in out
+    assert "php" in out
+
+
+def test_code_index_missing_dependency_exits_2(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+):
+    import okf_kit.code.indexer as indexer
+
+    def missing(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise ValueError("Tree-sitter parser support is not installed; install okf-kit[treesitter]")
+
+    monkeypatch.setattr(indexer, "index_codebase", missing)
+    code, _, err = _run(["code", "index", str(tmp_path), str(tmp_path / "kb")], capsys)
+    assert code == 2
+    assert "okf-kit[treesitter]" in err
+
+
+def test_code_index_io_error_exits_2(tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch):
+    import okf_kit.code.indexer as indexer
+
+    def fail(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise OSError("disk full")
+
+    monkeypatch.setattr(indexer, "index_codebase", fail)
+    code, _, err = _run(["code", "index", str(tmp_path), str(tmp_path / "kb")], capsys)
+    assert code == 2
+    assert "disk full" in err
+
+
+def test_code_index_writes_valid_searchable_bundle(tmp_path: Path, capsys):
+    pytest.importorskip("tree_sitter_language_pack")
+    repo = tmp_path / "repo"
+    package = repo / "pkg"
+    package.mkdir(parents=True)
+    (package / "service.py").write_text(
+        "class Greeter:\n"
+        "    def greet(self) -> str:\n"
+        "        return 'hello'\n"
+        "\n"
+        "def normalize(value: str) -> str:\n"
+        "    return value.strip()\n",
+        encoding="utf-8",
+    )
+    bundle = tmp_path / "kb"
+
+    code, out, _ = _run(["code", "index", str(repo), str(bundle)], capsys)
+    assert code == 0
+    assert "indexed code: wrote" in out
+    assert (bundle / "code" / "pkg" / "service.py.md").is_file()
+
+    code, _, _ = _run(["validate", str(bundle)], capsys)
+    assert code == 0
+    code, out, _ = _run(["search", str(bundle), "Greeter"], capsys)
+    assert code == 0
+    assert "pkg/service.py" in out
+
+
+def test_code_index_refreshes_generated_concepts_by_default(tmp_path: Path, capsys):
+    pytest.importorskip("tree_sitter_language_pack")
+    repo = tmp_path / "repo"
+    package = repo / "pkg"
+    package.mkdir(parents=True)
+    service = package / "service.py"
+    service.write_text("class Greeter:\n    pass\n", encoding="utf-8")
+    bundle = tmp_path / "kb"
+
+    code, _, _ = _run(["code", "index", str(repo), str(bundle)], capsys)
+    assert code == 0
+    service.write_text(
+        "class Greeter:\n    pass\n\ndef new_helper():\n    return None\n",
+        encoding="utf-8",
+    )
+
+    code, out, _ = _run(["code", "index", str(repo), str(bundle)], capsys)
+    assert code == 0
+    assert "updated 1" in out
+    assert "new_helper" in (bundle / "code" / "pkg" / "service.py.md").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_agent_install_help(capsys):
     code, out, _ = _run(["agent", "install", "--help"], capsys)
     assert code == 0
@@ -112,6 +204,7 @@ def test_agent_install_project_dry_run(
     assert code == 0
     assert f"would write {skill_prefix}/okf-author/SKILL.md" in out
     assert f"would write {skill_prefix}/okf-search/SKILL.md" in out
+    assert f"would write {skill_prefix}/okf-code/SKILL.md" in out
     assert f"would write {manifest_rel}" in out
     assert not (tmp_path / skill_prefix.split("/", maxsplit=1)[0]).exists()
 
@@ -136,9 +229,11 @@ def test_agent_install_project_writes_files(
     assert code == 0
     assert f"wrote {skill_prefix}/okf-author/SKILL.md" in out
     assert f"wrote {skill_prefix}/okf-search/SKILL.md" in out
+    assert f"wrote {skill_prefix}/okf-code/SKILL.md" in out
     assert f"wrote {manifest_rel}" in out
     assert (tmp_path / skill_prefix / "okf-author" / "SKILL.md").is_file()
     assert (tmp_path / skill_prefix / "okf-search" / "SKILL.md").is_file()
+    assert (tmp_path / skill_prefix / "okf-code" / "SKILL.md").is_file()
     manifest = json.loads((tmp_path / manifest_rel).read_text(encoding="utf-8"))
     assert manifest["target"] == target
     assert manifest["scope"] == "project"

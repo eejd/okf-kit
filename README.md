@@ -6,9 +6,8 @@ An OKF bundle is a directory of Markdown files; each file is one *concept* (YAML
 frontmatter + body), the file path is its id, and relative Markdown links form a
 knowledge graph. `okf-kit` is an agent-native toolkit for that format: a pure
 Python core exposed two ways — the **`okf` CLI** and the **`okf-mcp`** MCP server
-(the universal layer for Claude Code, Antigravity, and any MCP client) — plus an
-**`okf-search`** skill and an **`okf-author`** skill. No web app, no
-REST/GraphQL.
+(the universal layer for Claude Code, Antigravity, and any MCP client) — plus
+**`okf-search`**, **`okf-author`**, and **`okf-code`** skills.
 
 > OKF is "what knowledge looks like once loaded" — designed for LLMs, not
 > SPARQL engines. `okf-kit` makes a folder of Markdown queryable, citeable, and
@@ -35,6 +34,22 @@ source .venv/bin/activate    # …or activate once, then use `okf` / `okf-mcp` b
 > installs the same `okf` and `okf-mcp` commands.
 
 The examples below use `uv run`; drop the prefix if you've activated the venv.
+
+### Optional code indexing
+
+Codebase indexing is opt-in because it pulls parser dependencies:
+
+```bash
+uv sync --extra dev --extra treesitter
+# or, from an installed package:
+pip install "okf-kit[treesitter]"
+```
+
+Code indexing currently supports Python, Java, Scala, Rust, Go, Kotlin, Perl,
+C#, PHP, TypeScript, JavaScript, and HTML through `tree-sitter-language-pack`.
+It generates normal OKF `CodeModule` concepts for documentation, code finding,
+code-logic search, and syntax-grounded impact-analysis groundwork; it does not
+claim complete semantic impact analysis.
 
 ### Install `okf` as a uv tool
 
@@ -68,14 +83,15 @@ uv run okf agent install codex --scope project
 
 Project scope writes:
 
-- Claude Code: `.claude/skills/{okf-search,okf-author}/SKILL.md`
-- Codex: `.codex/skills/{okf-search,okf-author}/SKILL.md`
+- Claude Code: `.claude/skills/{okf-search,okf-author,okf-code}/SKILL.md`
+- Codex: `.codex/skills/{okf-search,okf-author,okf-code}/SKILL.md`
 
-Use `--dry-run` to preview writes and `--update` to refresh files previously
-installed by OKF. This installs skills only: `okf-search` for read-only
-progressive context and `okf-author` for create/update authoring loops,
-including evidence-backed implementation wikis for code repositories. It does
-not install subagents, hooks, MCP config, or plugins.
+Use `--dry-run` to preview writes. Re-running the command refreshes files
+previously installed by OKF; unmanaged local files are still refused. This
+installs skills only: `okf-search` for read-only progressive context,
+`okf-author` for create/update authoring loops, and `okf-code` for codebase
+indexing/search/impact workflows. It does not install subagents, hooks, MCP
+config, or plugins.
 
 Run project-scope installs from the repository where you want the skills
 available. The installer refuses to write inside an OKF bundle root or
@@ -97,6 +113,28 @@ uv run okf index regen mykb                    # regenerate per-directory index.
 
 Built-in concept types: `Table`, `Metric`, `Runbook`, `Playbook`, `API` (or any
 custom value). The only required frontmatter field is `type`.
+
+## Index a codebase
+
+With the `treesitter` extra installed, generate a code map from a repository
+into an OKF bundle:
+
+```bash
+uv run okf code index /absolute/path/to/repo codekb
+uv run okf validate codekb
+uv run okf search codekb UserService
+uv run okf read codekb code/pkg/service.py --depth 1
+```
+
+`okf code index` writes managed `CodeModule` concepts under `code/`, preserving
+the source extension in concept ids so polyglot repositories do not collide
+(`src/app.py` becomes `code/src/app.py`). By default it scans all supported
+languages; repeat `--language` to limit the run, for example
+`--language python --language typescript`. Re-running refreshes generated
+sections while preserving hand-authored narrative outside the managed block;
+`--update` is accepted for compatibility. Use the packaged `okf-code` skill for
+the agent workflow: index first, then use existing `okf search` and
+`okf read --depth N` over the generated concepts.
 
 ## Use it from an agent (MCP)
 
@@ -189,21 +227,25 @@ One pure core, two thin presentation layers (no duplicated logic):
 ```
 okf_kit.core  (model · parse · validate · links · search · context · index · templates)
       │
-      ├── okf_kit.cli   → `okf` CLI      (argparse: init/new/validate/search/read/index)
+      ├── okf_kit.cli   → `okf` CLI      (argparse: init/new/validate/search/read/index/code)
       └── okf_kit.mcp   → `okf-mcp`      (FastMCP/stdio: search/read_concept/validate + okf://)
 ```
 
 The core is pure: deterministic, no network, no randomness. **Security:** every
 caller-supplied concept id and link target is confined to the bundle root
 (segment-regex validation + resolved-path containment, including symlink
-escapes), on both the read and write paths.
+escapes), on both the read and write paths. Code indexing lives outside
+`okf_kit.core` and imports Tree-sitter only when `okf code index` runs.
 
 ## Status
 
 **v0.1 — build + use a single OKF bundle.** In scope: parse/validate (SPEC §9),
 search, progressive-context read, `init`/`new`/`index regen`, the MCP server,
-the `okf-search` and `okf-author` skills, and **`okf serve`** — a read-only
-browser UI (tree, search, graph, reader) launched on demand by an agent harness.
+the `okf-search`, `okf-author`, and `okf-code` skills, **`okf serve`** — a
+read-only browser UI (tree, search, graph, reader) launched on demand by an
+agent harness, and Tree-sitter-backed code indexing through
+`okf-kit[treesitter]` for Python, Java, Scala, Rust, Go, Kotlin, Perl, C#, PHP,
+TypeScript, JavaScript, and HTML.
 **Next:** web-UI editing
 (frontmatter form, Markdown editor, link autocomplete, CRUD) and bundle
 import/export. **Later milestones (see the [`project/backlog`](wiki/project/backlog.md) wiki concept):** producer

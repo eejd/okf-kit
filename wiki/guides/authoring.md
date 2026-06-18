@@ -6,7 +6,7 @@ description: How to build an OKF bundle — the init → create → author → l
 ---
 # Overview
 
-Build a knowledge base with OKF. Building is done with the `okf` CLI and the `okf-author` skill — the agent writes `.md` files directly (OKF is just Markdown); [okf-mcp](/interfaces/okf-mcp.md) is read + validate, and its `create_concept` tool additionally enforces a richness floor so MCP-authored pages are substantive. Use `okf-search` for read-only progressive-context investigation, and `okf-author` for both create and update authoring loops. Install both skills with `okf agent install claude-code|codex --scope project`; this installer is skill-only and does not install subagents or hooks. For build/gate commands see [Build & gates](/conventions/build-and-gates.md); for the CLI subcommands see [okf CLI](/interfaces/okf-cli.md).
+Build a knowledge base with OKF. Building is done with the `okf` CLI and the `okf-author` skill — the agent writes `.md` files directly (OKF is just Markdown); [okf-mcp](/interfaces/okf-mcp.md) is read + validate, and its `create_concept` tool additionally enforces a richness floor so MCP-authored pages are substantive. Use `okf-search` for read-only progressive-context investigation, `okf-author` for both create and update authoring loops, and `okf-code` when a codebase should be indexed into OKF `CodeModule` concepts. Install the standard skills with `okf agent install claude-code|codex --scope project`; this installer is skill-only and does not install subagents or hooks. For build/gate commands see [Build & gates](/conventions/build-and-gates.md); for the CLI subcommands see [okf CLI](/interfaces/okf-cli.md).
 
 # Steps
 
@@ -18,6 +18,14 @@ The author → link → validate → index loop:
 4. **Link** — add links between concepts; the spec recommends absolute (leading-slash, bundle-relative) form, relative also works. Find targets with `okf search mykb "<term>"`. See [Links](/format/links.md).
 5. **Validate** — `okf validate mykb`. Fix errors (missing frontmatter, empty `type`); warnings/info are non-blocking. See [Conformance](/format/conformance.md).
 6. **Index** — `okf index regen mykb` writes per-directory `index.md`. **Caution:** regen overwrites each `index.md` body — back up a hand-authored root first (see [Backlog](/project/backlog.md)).
+
+For code repositories, install `okf-kit[treesitter]` and run
+`okf code index <repo> <bundle>` to generate managed `CodeModule` concepts under
+`code/`. The default scans Python, Java, Scala, Rust, Go, Kotlin, Perl, C#,
+PHP, TypeScript, JavaScript, and HTML; repeat `--language` to narrow the run.
+Then search and read those concepts the same way: `okf search <bundle>
+"symbol"` followed by `okf read <bundle> <id> --depth 1`. Generated impact
+notes are syntax-derived candidates, not complete semantic proof.
 
 # Definition
 

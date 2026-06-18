@@ -15,11 +15,17 @@ Target = Literal["claude-code", "codex"]
 Scope = Literal["project", "user"]
 
 ASSET_VERSION = "1"
-SKILL_NAMES = ("okf-author", "okf-search")
+SKILL_NAMES = ("okf-author", "okf-search", "okf-code")
 LEGACY_ASSET_DIGESTS: dict[str, frozenset[str]] = {
     "okf-author/SKILL.md": frozenset(
         {
             "624c4ef881f783e4a03b6128aca42b9ab04791eb89544b3a7dbd68d35c857b6c",
+            "825ea861cab759c0c0100d3903e6554af8b9c10fc5d760969d6cf91c5b40d524",
+        }
+    ),
+    "okf-search/SKILL.md": frozenset(
+        {
+            "3d9e0a1d8a9901092960977a17df77f1869561adde11f262d18ade8e60560e44",
         }
     ),
 }
@@ -61,7 +67,7 @@ def install_agent_assets(
     *,
     scope: Scope = "project",
     dry_run: bool = False,
-    update: bool = False,
+    update: bool = True,
 ) -> list[InstallAction]:
     """Install OKF-owned skill assets for ``target``.
 

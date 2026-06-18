@@ -81,7 +81,7 @@ def test_user_scope_targets_documented_skill_roots_and_manifests(
     assert codex_manifest["scope"] == "user"
 
 
-def test_existing_owned_file_skips_without_update_and_updates_with_matching_digest(
+def test_existing_owned_file_updates_by_default_with_matching_digest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -104,13 +104,62 @@ def test_existing_owned_file_skips_without_update_and_updates_with_matching_dige
         {"okf-author/SKILL.md": frozenset({sha256(original.encode()).hexdigest()})},
     )
 
-    skipped = install_agent_assets(tmp_path, "codex", scope="project")
-    assert "skipped .codex/skills/okf-author/SKILL.md" in [a.message for a in skipped]
-    assert first.read_text(encoding="utf-8") == original
-
-    updated = install_agent_assets(tmp_path, "codex", scope="project", update=True)
+    updated = install_agent_assets(tmp_path, "codex", scope="project")
     assert "updated .codex/skills/okf-author/SKILL.md" in [a.message for a in updated]
     assert first.read_text(encoding="utf-8") == changed_text
+
+    skipped = install_agent_assets(tmp_path, "codex", scope="project", update=False)
+    assert "skipped .codex/skills/okf-author/SKILL.md" in [a.message for a in skipped]
+    assert first.read_text(encoding="utf-8") == changed_text
+
+
+def test_legacy_manifest_migrates_existing_skills_and_adds_new_skill(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    author = tmp_path / ".codex" / "skills" / "okf-author" / "SKILL.md"
+    search = tmp_path / ".codex" / "skills" / "okf-search" / "SKILL.md"
+    author.parent.mkdir(parents=True)
+    search.parent.mkdir(parents=True)
+    author.write_text("old author\n", encoding="utf-8")
+    search.write_text("old search\n", encoding="utf-8")
+    author_digest = sha256(author.read_bytes()).hexdigest()
+    search_digest = sha256(search.read_bytes()).hexdigest()
+    manifest = manifest_path(tmp_path, "codex", "project")
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "target": "codex",
+                "scope": "project",
+                "version": "1",
+                "files": {
+                    ".codex/skills/okf-author/SKILL.md": {"sha256": author_digest},
+                    ".codex/skills/okf-search/SKILL.md": {"sha256": search_digest},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        agent_install,
+        "LEGACY_ASSET_DIGESTS",
+        {
+            "okf-author/SKILL.md": frozenset({author_digest}),
+            "okf-search/SKILL.md": frozenset({search_digest}),
+        },
+    )
+
+    actions = install_agent_assets(tmp_path, "codex", scope="project")
+
+    messages = [action.message for action in actions]
+    assert "updated .codex/skills/okf-author/SKILL.md" in messages
+    assert "updated .codex/skills/okf-search/SKILL.md" in messages
+    assert "wrote .codex/skills/okf-code/SKILL.md" in messages
+    assert "old author" not in author.read_text(encoding="utf-8")
+    assert "old search" not in search.read_text(encoding="utf-8")
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    assert ".codex/skills/okf-code/SKILL.md" in data["files"]
 
 
 def test_update_refuses_hash_mismatch_as_unmanaged(tmp_path: Path):

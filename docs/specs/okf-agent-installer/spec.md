@@ -14,9 +14,9 @@
 ## Objective
 
 Ship the accepted RFC-0001 skill-only installer slice. An installed `okf` CLI
-must be able to install or update OKF-owned `okf-search` and `okf-author` skills
-for Claude Code and Codex without requiring a source checkout, while keeping
-the OKF core pure and avoiding subagent/hook/plugin scope.
+must be able to install or refresh OKF-owned `okf-search`, `okf-author`, and
+`okf-code` skills for Claude Code and Codex without requiring a source checkout,
+while keeping the OKF core pure and avoiding subagent/hook/plugin scope.
 
 ## Boundaries
 
@@ -47,9 +47,9 @@ the OKF core pure and avoiding subagent/hook/plugin scope.
 
 ## Testing Strategy
 
-- Skill content: TDD. Tests assert `okf-author` and `okf-search` exist in
-  package assets, have valid frontmatter, and contain the workflow commands and
-  current link guidance.
+- Skill content: TDD. Tests assert `okf-author`, `okf-search`, and `okf-code`
+  exist in package assets, have valid frontmatter, and contain the workflow
+  commands and current link/code-indexing guidance.
 - Installer logic: TDD. Unit tests exercise dry-run, project/user target paths,
   manifest ownership, update behavior, and unmanaged-file refusal.
 - CLI surface: goal-based plus subprocess tests. `okf agent install --help`
@@ -66,20 +66,24 @@ the OKF core pure and avoiding subagent/hook/plugin scope.
   skill files it would write under `.claude/skills` and does not write files.
 - [x] `okf agent install codex --scope project --dry-run` reports the skill
   files it would write under `.codex/skills` and does not write files.
-- [x] Project installs write `okf-search` and `okf-author` skill directories,
-  plus a target-local OKF ownership manifest, for Claude Code and Codex.
+- [x] Project installs write `okf-search`, `okf-author`, and `okf-code` skill
+  directories, plus a target-local OKF ownership manifest, for Claude Code and
+  Codex.
 - [x] User-scope installs target the current documented user skill roots:
   `~/.claude/skills` for Claude Code and `~/.codex/skills` for Codex, with
   ownership manifests under `~/.claude/okf-agent-assets.json` and
   `~/.codex/okf-agent-assets.json`.
-- [x] `--update` refreshes files recorded as OKF-owned and refuses to overwrite
-  unmanaged existing files; without `--update`, existing OKF-owned files are
-  left unchanged and reported as skipped.
+- [x] Re-running `okf agent install` refreshes files recorded as OKF-owned by
+  default and refuses to overwrite unmanaged existing files; `--update` is
+  accepted for compatibility with earlier CLI usage.
 - [x] Update ownership requires all of: matching target/scope in the manifest,
   a fixed OKF asset-path allowlist, confined relative paths, and an existing
   file digest matching both the manifest and a known OKF release digest for
   that asset path. Missing, malformed, unknown, spoofed, or hash-mismatched
   manifest entries are treated as unmanaged and refused.
+- [x] Legacy OKF-owned installs whose manifest records a prior known OKF asset
+  digest can be migrated to the current packaged skills, including adding new
+  OKF-owned skill assets that did not exist in the prior manifest.
 - [x] Every planned destination is resolved and confined under the selected
   skill root or manifest parent before any write occurs; traversal, absolute
   destination paths, non-directory path components, and symlink escapes fail
@@ -87,8 +91,8 @@ the OKF core pure and avoiding subagent/hook/plugin scope.
 - [x] Project-scope installs refuse to run from an OKF bundle root or
   subdirectory and leave the bundle valid without writing `.codex` or
   `.claude` agent assets into it.
-- [x] The wheel produced by `uv build` contains the installable `okf-search` and
-  `okf-author` skill assets.
+- [x] The wheel produced by `uv build` contains the installable `okf-search`,
+  `okf-author`, and `okf-code` skill assets.
 - [x] A temporary environment can install the built wheel and run the
   wheel-installed `okf agent install ... --dry-run` plus one project install
   without access to the source checkout.
@@ -116,8 +120,8 @@ the OKF core pure and avoiding subagent/hook/plugin scope.
 - Technical: Codex project skills target `.codex/skills`; Claude Code project
   skills target `.claude/skills` (source: RFC-0001 external docs research).
 - Product: accepted scope is skill-only: add `okf-search`, update `okf-author`,
-  install skills for Codex/Claude Code, and defer subagents/hooks (source:
-  RFC-0001).
+  add `okf-code` for the RFC-0002 code-indexing workflow, install skills for
+  Codex/Claude Code, and defer subagents/hooks (source: RFC-0001 and RFC-0002).
 - Product: per-target manifests under `.claude` and `.codex` are the default
   ownership record shape in both project and user scopes (source: user
   confirmation 2026-06-17).

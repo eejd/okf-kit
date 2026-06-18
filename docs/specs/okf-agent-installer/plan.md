@@ -81,11 +81,14 @@ the selected skill root or manifest parent; traversal, absolute paths, symlink
 escapes, existing non-directory path components, or malformed asset/manifest
 paths raise `ValueError` before any write. Existing unmanaged files cause a
 `ValueError` and no overwrite. Existing
-OKF-owned files are skipped unless `--update` is set. `--update` writes only
-when the current file digest matches the manifest; hash mismatches are treated
-as user edits and refused unless a future force mode exists. Dry-run computes
-the same plan but performs no writes. If a manifest is missing, existing files
-are treated as unmanaged.
+OKF-owned files are refreshed by default on re-run; `--update` remains accepted
+for compatibility with earlier CLI usage. Refresh writes only when the current
+file digest matches the manifest and a known OKF release digest for that asset;
+hash mismatches are treated as user edits and refused unless a future force
+mode exists. Dry-run computes the same plan but performs no writes. If a
+manifest is missing, existing files are treated as unmanaged. Legacy manifests
+that record prior known OKF asset digests can be migrated to the current
+packaged skills.
 
 ## Tasks
 
@@ -94,11 +97,11 @@ are treated as unmanaged.
 **Depends on:** none
 
 **Tests:**
-- TDD: `test_skill.py` asserts package assets include `okf-search` and
-  `okf-author`, valid frontmatter, distinct create and update workflow guidance
-  in `okf-author`, current link guidance, and progressive context workflow text.
-  Verifies the skill-content ACs.
-- Goal-based: `uv build` wheel inspection contains both `SKILL.md` files.
+- TDD: `test_skill.py` asserts package assets include `okf-search`,
+  `okf-author`, and `okf-code`, valid frontmatter, distinct create and update
+  workflow guidance in `okf-author`, current link guidance, progressive context
+  workflow text, and code-indexing workflow text. Verifies the skill-content ACs.
+- Goal-based: `uv build` wheel inspection contains all three `SKILL.md` files.
   Verifies the wheel asset AC.
 - Goal-based: install the built wheel into a temporary environment and run the
   wheel-installed `okf agent install codex --scope project --dry-run` plus one
@@ -107,12 +110,13 @@ are treated as unmanaged.
 **Approach:**
 - Add `okf_kit/agent_assets/skills/okf-author/SKILL.md`.
 - Add `okf_kit/agent_assets/skills/okf-search/SKILL.md`.
+- Add `okf_kit/agent_assets/skills/okf-code/SKILL.md`.
 - Keep or adapt the legacy `okf-kit/skills/okf-author/SKILL.md` test fixture
   only if needed for backwards source-tree compatibility.
 - Configure Hatchling to include the package-data files in wheels.
 
 **Done when:** skill asset tests fail before assets/config changes and pass
-after them; wheel inspection finds both skill files; a temporary environment
+after them; wheel inspection finds all three skill files; a temporary environment
 installs the wheel and runs the wheel-installed installer dry-run plus one
 project install.
 
@@ -126,7 +130,7 @@ project install.
   creation, skip-without-update, update with matching digest, refusal with
   hash-mismatched manifest entries, missing manifest refusal, malformed manifest
   refusal, spoofed manifest digest refusal, non-allowlisted but confined
-  manifest entry refusal, unmanaged-file refusal, traversal/absolute
+  manifest entry refusal, legacy-manifest migration, unmanaged-file refusal, traversal/absolute
   destination refusal, non-directory component refusal, symlink escape refusal,
   OKF bundle root/subdirectory refusal, and no-side-effects refusal before parent
   directories, files, or manifests are created. Verifies
@@ -220,3 +224,5 @@ and the target-local manifest.
 ## Changelog
 
 - 2026-06-17: initial plan from accepted RFC-0001.
+- 2026-06-18: amended to include refresh-by-default behavior, `okf-code` as an
+  installed skill asset, and legacy OKF-owned manifest migration.

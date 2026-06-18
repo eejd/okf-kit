@@ -1,4 +1,4 @@
-"""The ``okf`` CLI — init / new / validate / search / read / index.
+"""The ``okf`` CLI — init / new / validate / search / read / index / code.
 
 A thin presentation layer over :mod:`okf_kit.core`. Exit codes: ``0`` success,
 ``1`` conformance errors, ``2`` usage / not-found / IO errors.
@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
         if exc.suggestions:
             print(f"       did you mean: {', '.join(exc.suggestions[:5])}", file=sys.stderr)
         return 2
-    except (ValueError, FileExistsError) as exc:
+    except (ValueError, FileExistsError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
@@ -88,6 +88,40 @@ def _build_parser() -> argparse.ArgumentParser:
     p_regen = idx_sub.add_parser("regen", help="Regenerate per-directory index.md files.")
     p_regen.add_argument("bundle")
 
+    p_code = sub.add_parser("code", help="Codebase indexing into OKF concepts.")
+    code_sub = p_code.add_subparsers(dest="code_command", required=True)
+    p_code_index = code_sub.add_parser(
+        "index",
+        help=(
+            "Index source code into OKF CodeModule concepts "
+            "(requires okf-kit[treesitter])."
+        ),
+        description=(
+            "Index source code into OKF CodeModule concepts. "
+            "Supported languages require okf-kit[treesitter]."
+        ),
+    )
+    p_code_index.add_argument("repo", help="Source repository root to index.")
+    p_code_index.add_argument("bundle", help="OKF bundle root to write CodeModule concepts.")
+    p_code_index.add_argument(
+        "--language",
+        action="append",
+        help=(
+            "Source language to index; repeat for multiple languages. "
+            "Default: all supported languages. Supported: python, javascript, typescript, java, "
+            "scala, rust, go, kotlin, perl, csharp, php, html."
+        ),
+    )
+    p_code_index.add_argument(
+        "--update",
+        action="store_true",
+        default=True,
+        help=(
+            "Accepted for compatibility; generated code concepts refresh by default "
+            "while preserving narrative notes."
+        ),
+    )
+
     p_serve = sub.add_parser(
         "serve", help="Serve a read-only web UI for a bundle (localhost, on demand)."
     )
@@ -103,7 +137,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_agent_install.add_argument("target", choices=("claude-code", "codex"))
     p_agent_install.add_argument("--scope", choices=("project", "user"), default="project")
     p_agent_install.add_argument("--dry-run", action="store_true")
-    p_agent_install.add_argument("--update", action="store_true")
+    p_agent_install.add_argument(
+        "--update",
+        action="store_true",
+        default=True,
+        help="Accepted for compatibility; OKF-owned skills refresh by default.",
+    )
 
     return parser
 
@@ -121,6 +160,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         return _cmd_read(args)
     if args.command == "index":
         return _cmd_index_regen(args)
+    if args.command == "code":
+        return _cmd_code(args)
     if args.command == "serve":
         return _cmd_serve(args)
     if args.command == "agent":
@@ -186,6 +227,28 @@ def _cmd_read(args: argparse.Namespace) -> int:
 def _cmd_index_regen(args: argparse.Namespace) -> int:
     written = regenerate_indexes(Path(args.bundle))
     print(f"regenerated {len(written)} index.md file(s)")
+    return 0
+
+
+def _cmd_code(args: argparse.Namespace) -> int:
+    if args.code_command == "index":
+        return _cmd_code_index(args)
+    return 2
+
+
+def _cmd_code_index(args: argparse.Namespace) -> int:
+    from okf_kit.code.indexer import index_codebase
+
+    result = index_codebase(
+        Path(args.repo),
+        Path(args.bundle),
+        languages=args.language,
+        update=args.update,
+    )
+    print(
+        "indexed code: "
+        f"wrote {result.written}, updated {result.updated}, skipped {result.skipped}"
+    )
     return 0
 
 

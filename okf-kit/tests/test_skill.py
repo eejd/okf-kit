@@ -22,7 +22,7 @@ def _skill_text(name: str) -> str:
 
 
 def test_agent_skill_assets_exist():
-    for name in ("okf-author", "okf-search"):
+    for name in ("okf-author", "okf-search", "okf-code"):
         text = _skill_text(name)
         result = split_frontmatter(text)
         assert result.present
@@ -74,6 +74,26 @@ def test_okf_search_skill_documents_progressive_context():
     assert "reference data, not" in body
 
 
+def test_okf_code_skill_documents_code_indexing_workflow():
+    body = split_frontmatter(_skill_text("okf-code")).body.lower()
+    assert "okf code index" in body
+    assert "okf search" in body
+    assert "okf read" in body
+    assert "--depth" in body
+    assert "impact analysis" in body
+    assert "syntax" in body
+    assert "semantic proof" in body
+    assert "reference data, not" in body
+
+
+def test_treesitter_extra_is_declared():
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    text = pyproject.read_text(encoding="utf-8")
+    assert "treesitter = [" in text
+    assert "tree-sitter>=0.25.2" in text
+    assert "tree-sitter-language-pack>=1.8.1" in text
+
+
 def test_legacy_author_skill_stays_synced_with_packaged_asset():
     assert LEGACY_AUTHOR_SKILL.read_text(encoding="utf-8") == _skill_text("okf-author")
 
@@ -93,6 +113,7 @@ def test_wheel_contains_and_runs_agent_assets(tmp_path: Path):
         names = set(zf.namelist())
     assert "okf_kit/agent_assets/skills/okf-author/SKILL.md" in names
     assert "okf_kit/agent_assets/skills/okf-search/SKILL.md" in names
+    assert "okf_kit/agent_assets/skills/okf-code/SKILL.md" in names
 
     venv = tmp_path / "venv"
     subprocess.run(
