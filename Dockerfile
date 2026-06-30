@@ -11,8 +11,9 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 WORKDIR /app
 
 # Copy dependency manifest + lockfile first (cache-efficient layer ordering).
+# README.md and LICENSE are required by hatchling metadata/sdist.
 # THIRD_PARTY_NOTICES.md is required by hatchling's force-include directive.
-COPY pyproject.toml uv.lock THIRD_PARTY_NOTICES.md ./
+COPY pyproject.toml uv.lock README.md LICENSE THIRD_PARTY_NOTICES.md ./
 
 # Copy the source package (hatchling resolves packages = ["okf-kit/okf_kit"])
 COPY okf-kit/ okf-kit/
