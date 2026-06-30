@@ -1,16 +1,25 @@
-"""The ``okf-mcp`` server (FastMCP, stdio).
+"""The ``okf-mcp`` server (FastMCP, transport-agnostic).
 
-Exposes an OKF bundle to MCP clients (Claude Code, Antigravity, any MCP client)
-as five tools — ``search``, ``read_concept``, ``validate``, ``create_concept``,
-``init_bundle`` — plus an
-``okf://<bundle>/concepts/<cid>.md`` resource per concept. Tools are thin
-wrappers over :mod:`okf_kit.core`; the bundle is registered at startup by
-directory name.
+Exposes an OKF bundle to MCP clients (Claude Code, any MCP client) as five
+tools — ``search``, ``read_concept``, ``validate``, ``create_concept``,
+``init_bundle`` — plus an ``okf://<bundle>/concepts/<cid>.md`` resource per
+concept.  Tools are thin wrappers over :mod:`okf_kit.core`; the bundle is
+registered at startup by directory name.
+
+Transports (selectable at runtime via ``--transport``):
+  stdio           — default; classic pipe/subprocess mode.
+  streamable-http — HTTP+SSE, binds loopback (127.0.0.1) by default.
+  sse             — legacy SSE-only HTTP mode.
+
+When running HTTP transport, host and port are set on ``make_server()``
+(passed to the :class:`FastMCP` constructor) so DNS-rebinding protection is
+activated automatically for loopback binds.
 
 Tool descriptions are the agent trigger surface (design §11); the
 ``wiki/reference/tools.md`` concept is the source of truth and a test asserts
 they stay in sync.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -254,9 +263,7 @@ _RICHNESS_SECTIONS = frozenset(
 def _check_richness(body: str) -> None:
     """Reject thin concept bodies (too few words, or no depth section)."""
     words = len(body.split())
-    sections = {
-        line[2:].strip().lower() for line in body.splitlines() if line.startswith("# ")
-    }
+    sections = {line[2:].strip().lower() for line in body.splitlines() if line.startswith("# ")}
     found = sections & _RICHNESS_SECTIONS
     problems: list[str] = []
     if words < _RICH_MIN_WORDS:
@@ -315,10 +322,25 @@ def tool_init_bundle(
     return {"initialized": True, "path": str(path)}
 
 
-def make_server(bundles: dict[str, Any]) -> FastMCP:
-    """Build a FastMCP server with tools + per-concept ``okf://`` resources."""
+def make_server(
+    bundles: dict[str, Any],
+    *,
+    host: str = "127.0.0.1",
+    port: int = 4020,
+) -> FastMCP:
+    """Build a FastMCP server with tools + per-concept ``okf://`` resources.
+
+    Args:
+        bundles: Mapping of bundle name to bundle root path.
+        host: Bind address for HTTP/SSE transports (default loopback ``127.0.0.1``).
+              Passed to :class:`FastMCP`; DNS-rebinding protection is enabled
+              automatically for loopback addresses.
+        port: TCP port for HTTP/SSE transports (default ``4020``, the hive OKF port band).
+              Ignored in stdio mode but always forwarded to the constructor so a single
+              ``make_server()`` call covers all transport choices.
+    """
     reg = BundleRegistry(bundles)
-    server = FastMCP("okf")
+    server = FastMCP("okf", host=host, port=port, streamable_http_path="/mcp")
 
     @server.tool(
         name="search",
@@ -440,16 +462,42 @@ def _hit_dict(hit: Hit) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
+    _TRANSPORT_ALIASES = {"http": "streamable-http"}
+
     parser = argparse.ArgumentParser(
         prog="okf-mcp",
-        description="OKF MCP server (stdio). Registers each bundle by its directory name.",
+        description=(
+            "OKF MCP server. Registers each bundle by its directory name. "
+            "Use --transport to select stdio (default), streamable-http, or sse."
+        ),
     )
     parser.add_argument(
         "bundles", nargs="+", help="Bundle directories to serve (registered by directory name)."
     )
+    parser.add_argument(
+        "--transport",
+        default="stdio",
+        choices=["stdio", "http", "streamable-http", "sse"],
+        help=(
+            "Transport to use: stdio (default), streamable-http (or alias http), sse. "
+            "HTTP transports bind --host:--port (loopback by default)."
+        ),
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind host for HTTP/SSE transports (default 127.0.0.1 — loopback only).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=4020,
+        help="Port for HTTP/SSE transports (default 4020 — hive OKF port band).",
+    )
     args = parser.parse_args(argv)
+    transport: str = _TRANSPORT_ALIASES.get(args.transport, args.transport)
     bundles = {Path(b).name: Path(b) for b in args.bundles}
-    make_server(bundles).run()
+    make_server(bundles, host=args.host, port=args.port).run(transport=transport)  # type: ignore[arg-type]
     return 0
 
 

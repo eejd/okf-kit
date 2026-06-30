@@ -153,3 +153,82 @@ def test_tool_init_bundle(tmp_path: Path):
     res = tool_init_bundle(reg, "kb")
     assert res["initialized"] is True
     assert (tmp_path / "newkb" / "index.md").is_file()
+
+
+# --- HTTP transport wiring (WS1: hive fork addition) -------------------------
+
+
+def test_make_server_accepts_host_and_port_kwargs(tmp_path: Path):
+    """make_server() host/port kwargs propagate to the FastMCP Settings."""
+    server = make_server({"kb": _bundle(tmp_path)}, host="127.0.0.1", port=4020)
+    assert server.settings.host == "127.0.0.1"
+    assert server.settings.port == 4020
+
+
+def test_make_server_default_host_is_loopback(tmp_path: Path):
+    """Default host must be loopback — never 0.0.0.0 (security gate)."""
+    server = make_server({"kb": _bundle(tmp_path)})
+    assert server.settings.host == "127.0.0.1", (
+        f"Default host {server.settings.host!r} is not loopback — "
+        "this would expose the KB off-host without Traefik."
+    )
+
+
+def test_make_server_streamable_http_path_is_mcp(tmp_path: Path):
+    """Streamable-HTTP path must be /mcp to match *.mcp.home.zt/mcp convention."""
+    server = make_server({"kb": _bundle(tmp_path)})
+    assert server.settings.streamable_http_path == "/mcp"
+
+
+def test_main_transport_flag_defaults_to_stdio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """--transport defaults to 'stdio'; run() receives 'stdio'."""
+    from okf_kit import mcp as mcp_mod
+
+    calls: list[str] = []
+
+    class _FakeServer:
+        def run(self, transport: str = "stdio") -> None:
+            calls.append(transport)
+
+    monkeypatch.setattr(mcp_mod, "make_server", lambda bundles, **kw: _FakeServer())
+    mcp_mod.main([str(tmp_path)])
+    assert calls == ["stdio"]
+
+
+def test_main_transport_http_alias_maps_to_streamable_http(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """--transport http is an alias for streamable-http."""
+    from okf_kit import mcp as mcp_mod
+
+    calls: list[str] = []
+
+    class _FakeServer:
+        def run(self, transport: str = "stdio") -> None:
+            calls.append(transport)
+
+    monkeypatch.setattr(mcp_mod, "make_server", lambda bundles, **kw: _FakeServer())
+    mcp_mod.main([str(tmp_path), "--transport", "http"])
+    assert calls == ["streamable-http"]
+
+
+def test_main_transport_streamable_http_direct(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """--transport streamable-http passes through unchanged."""
+    from okf_kit import mcp as mcp_mod
+
+    calls: list[str] = []
+    kwargs_seen: list[dict] = []
+
+    class _FakeServer:
+        def run(self, transport: str = "stdio") -> None:
+            calls.append(transport)
+
+    def _fake_make_server(bundles: dict, **kw: object) -> _FakeServer:
+        kwargs_seen.append(dict(kw))
+        return _FakeServer()
+
+    monkeypatch.setattr(mcp_mod, "make_server", _fake_make_server)
+    mcp_mod.main([str(tmp_path), "--transport", "streamable-http", "--host", "127.0.0.1", "--port", "4021"])
+    assert calls == ["streamable-http"]
+    assert kwargs_seen[0]["host"] == "127.0.0.1"
+    assert kwargs_seen[0]["port"] == 4021
