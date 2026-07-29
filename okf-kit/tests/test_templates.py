@@ -11,7 +11,14 @@ def test_init_bundle_creates_root_index(tmp_path: Path):
     root = tmp_path / "mykb"
     init_bundle(root)
     idx = (root / "index.md").read_text()
-    assert "okf_version" in idx and "0.1" in idx
+    assert "okf_version" in idx and "0.2" in idx
+
+
+def test_init_bundle_accepts_explicit_okf_version(tmp_path: Path):
+    root = tmp_path / "mykb"
+    init_bundle(root, okf_version="0.1")
+    idx = (root / "index.md").read_text()
+    assert "0.1" in idx
 
 
 def test_create_concept_writes_template(tmp_path: Path):
