@@ -26,7 +26,7 @@ _BODY_TEMPLATES: dict[str, str] = {
 }
 
 
-def init_bundle(root: Path, okf_version: str = "0.1", name: str | None = None) -> Path:
+def init_bundle(root: Path, okf_version: str = "0.2", name: str | None = None) -> Path:
     """Create a bundle root with a root ``index.md`` declaring ``okf_version``."""
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)

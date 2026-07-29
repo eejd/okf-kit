@@ -1,6 +1,6 @@
 """Tests for okf_kit.core.model + okf_kit.core.parse.
 
-Written to the SPEC §9 / REQ-CONS-01..04 contract before implementation.
+Written to the SPEC §11 / REQ-CONS-01..04 contract before implementation.
 """
 from __future__ import annotations
 

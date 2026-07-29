@@ -1,6 +1,6 @@
 # okf-kit
 
-**Build and serve [Open Knowledge Format](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) (OKF v0.1) knowledge bundles — via a CLI and an MCP server.**
+**Build and serve [Open Knowledge Format](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) (OKF v0.2) knowledge bundles — via a CLI and an MCP server.**
 
 An OKF bundle is a directory of Markdown files; each file is one *concept* (YAML
 frontmatter + body), the file path is its id, and relative Markdown links form a
@@ -105,7 +105,7 @@ uv run okf init mykb --name "My Knowledge Base"
 uv run okf new mykb Table tables/users --title "Users" --desc "User accounts."
 uv run okf new mykb Metric metrics/churn --title "Churn" --desc "Monthly churn, see [users](../tables/users.md)."
 
-uv run okf validate mykb                       # SPEC §9 conformance (exit 1 if not conformant)
+uv run okf validate mykb                       # SPEC §11 conformance (exit 1 if not conformant)
 uv run okf search mykb churn                   # full-text search
 uv run okf read mykb metrics/churn --depth 1   # progressive context: concept + neighborhood
 uv run okf index regen mykb                    # regenerate per-directory index.md
@@ -244,7 +244,7 @@ escapes), on both the read and write paths. Code indexing lives outside
 
 ## Status
 
-**v0.1 — build + use a single OKF bundle.** In scope: parse/validate (SPEC §9),
+**v0.1 — build + use a single OKF bundle.** In scope: parse/validate (SPEC §11),
 search, progressive-context read, `init`/`new`/`index regen`, the MCP server,
 the `okf-search`, `okf-author`, and `okf-code` skills, **`okf serve`** — a
 read-only browser UI (tree, search, graph, reader) launched on demand by an
@@ -278,6 +278,6 @@ okf-kit is licensed under the MIT License — see [`LICENSE`](LICENSE).
 
 The Open Knowledge Format specification is separate Apache-2.0 licensed
 material published by Google Cloud. okf-kit is an independent implementation of
-OKF v0.1; it is not an official Google product and is not endorsed by Google.
+OKF v0.2; it is not an official Google product and is not endorsed by Google.
 See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for OKF attribution and
 bundled browser asset notices.

@@ -35,13 +35,13 @@ Read a concept by id, or progressively load its linked neighborhood. depth=0 ret
 
 ## validate
 
-Check OKF v0.1 conformance (SPEC §9). Returns `{conformant, errors, warnings, info}`. Errors block conformance; warnings/info are non-blocking.
+Check OKF v0.2 conformance (SPEC §11). Returns `{conformant, errors, warnings, info}`. Errors block conformance; warnings/info are non-blocking.
 
 - **CLI:** `okf validate <bundle> [--json]` (exit 1 if not conformant)
 - **MCP:** `validate(bundle) -> {conformant, errors, warnings, info}`
 
 <!-- desc:start -->
-Validate an OKF bundle against v0.1 conformance (SPEC §9). Returns {conformant, errors, warnings, info}. Errors such as missing frontmatter, invalid frontmatter, or empty type block conformance. Warnings such as missing title/description, invalid cids, and broken links are non-blocking. Info includes extension keys, nested sub-bundle markers, okf_version state, and empty bundles. Use after authoring and before publishing or CI. Example: validate(bundle='analytics').
+Validate an OKF bundle against v0.2 conformance (SPEC §11). Returns {conformant, errors, warnings, info}. Errors such as missing frontmatter, invalid frontmatter, or empty type block conformance. Warnings such as missing title/description, invalid cids, and broken links are non-blocking. Info includes extension keys, nested sub-bundle markers, okf_version state, and empty bundles. Use after authoring and before publishing or CI. Example: validate(bundle='analytics').
 <!-- desc:end -->
 
 ## create_concept
@@ -59,7 +59,7 @@ Create one substantive OKF concept. Use after searching/reading nearby concepts 
 
 Initialize (or re-initialize) a bundle root via MCP — writes `index.md` with `okf_version`. Idempotent.
 
-- **MCP:** `init_bundle(bundle, okf_version='0.1') -> {initialized, path}`
+- **MCP:** `init_bundle(bundle, okf_version='0.2') -> {initialized, path}`
 
 <!-- desc:start -->
 Initialize a registered OKF bundle root by writing root index.md with okf_version. Creates the directory if needed and rewrites index.md if it already exists, so use it before authoring a new bundle or when intentionally resetting the root index metadata. Example: init_bundle(bundle='wiki').

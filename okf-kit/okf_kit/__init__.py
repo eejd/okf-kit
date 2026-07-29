@@ -1,4 +1,4 @@
-"""okf-kit: Open Knowledge Format (OKF v0.1) core library, CLI, and MCP server.
+"""okf-kit: Open Knowledge Format (OKF v0.2) core library, CLI, and MCP server.
 
 An OKF bundle is a directory of Markdown files (YAML frontmatter + body); each
 file is one *concept*, the file path is its id, and relative Markdown links form

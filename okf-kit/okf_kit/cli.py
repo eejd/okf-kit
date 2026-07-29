@@ -39,13 +39,13 @@ def main(argv: list[str] | None = None) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="okf", description="Open Knowledge Format (OKF v0.1) CLI."
+        prog="okf", description="Open Knowledge Format (OKF v0.2) CLI."
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_init = sub.add_parser("init", help="Scaffold a new OKF bundle.")
     p_init.add_argument("dir", help="Directory to create the bundle in.")
-    p_init.add_argument("--okf-version", default="0.1")
+    p_init.add_argument("--okf-version", default="0.2")
     p_init.add_argument(
         "--name", help="Bundle display name (root index heading; defaults to the directory name)."
     )
@@ -63,7 +63,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_new.add_argument("--desc")
     p_new.add_argument("--tag", action="append", default=[])
 
-    p_val = sub.add_parser("validate", help="Validate OKF v0.1 conformance (SPEC §9).")
+    p_val = sub.add_parser("validate", help="Validate OKF v0.2 conformance (SPEC §11).")
     p_val.add_argument("bundle")
     p_val.add_argument("--json", action="store_true", help="Emit a JSON report.")
 
