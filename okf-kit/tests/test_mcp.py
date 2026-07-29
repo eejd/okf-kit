@@ -9,9 +9,12 @@ from okf_kit.core.context import ConceptNotFound
 from okf_kit.core.parse import parse_concept
 from okf_kit.mcp import (
     BundleRegistry,
+    DuplicateBundleNameError,
+    _parse_bundle_arg,
     make_server,
     tool_create_concept,
     tool_init_bundle,
+    tool_list_bundles,
     tool_read_concept,
     tool_search,
     tool_validate,
@@ -64,9 +67,51 @@ def test_make_server_registers_all_tools(tmp_path: Path):
     server = make_server({"kb": _bundle(tmp_path)})
     tools = asyncio.run(server.list_tools())
     names = {t.name for t in tools}
-    assert {"search", "read_concept", "validate", "create_concept", "init_bundle"} <= names
+    assert {
+        "search", "read_concept", "validate", "create_concept", "init_bundle", "list_bundles",
+    } <= names
     for tool in tools:
         assert tool.description and len(tool.description) > 30  # agent-triggerable
+
+
+def test_registry_rejects_duplicate_names_from_list_form(tmp_path: Path):
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    with pytest.raises(DuplicateBundleNameError):
+        BundleRegistry([("kb", a), ("kb", b)])
+
+
+def test_registry_accepts_dict_form_unchanged(tmp_path: Path):
+    root = _bundle(tmp_path)
+    reg = BundleRegistry({"kb": root})
+    assert reg.names() == ["kb"]
+
+
+def test_tool_list_bundles_reports_registered_names(tmp_path: Path):
+    reg = BundleRegistry({"kb": _bundle(tmp_path)})
+    listed = tool_list_bundles(reg)
+    assert listed == [{"bundle": "kb", "path": str(reg.get("kb"))}]
+
+
+def test_parse_bundle_arg_bare_path_uses_basename():
+    name, path = _parse_bundle_arg("/some/dir/mybundle")
+    assert name == "mybundle"
+    assert path == "/some/dir/mybundle"
+
+
+def test_parse_bundle_arg_name_equals_path():
+    name, path = _parse_bundle_arg("hive-dev=/bundle")
+    assert name == "hive-dev"
+    assert path == "/bundle"
+
+
+def test_parse_bundle_arg_rejects_empty_name_or_path():
+    with pytest.raises(ValueError):
+        _parse_bundle_arg("=/bundle")
+    with pytest.raises(ValueError):
+        _parse_bundle_arg("name=")
 
 
 def test_make_server_publishes_argument_metadata_and_annotations(tmp_path: Path):

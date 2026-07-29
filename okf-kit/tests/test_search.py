@@ -127,7 +127,48 @@ def test_search_snippet_contains_term(tmp_path):
 
 
 def test_search_hit_shape(tmp_path):
-    _bundle(tmp_path, {"a.md": "---\ntype: Table\ntitle: A\ndescription: d\n---\nx\n"})
-    h = search(build_index(tmp_path), "x")[0]
+    _bundle(tmp_path, {"a.md": "---\ntype: Table\ntitle: A\ndescription: d\n---\nplaceholder\n"})
+    h = search(build_index(tmp_path), "placeholder")[0]
     assert isinstance(h, Hit)
     assert h.type == "Table"
+
+
+def test_search_common_term_ranks_below_rare_term(tmp_path):
+    """IDF: a term present in nearly every doc should score far below one unique to a doc."""
+    common = {f"common{i}.md": "---\ntype: T\ntitle: item\ndescription: d\n---\nwidget\n" for i in range(9)}
+    _bundle(tmp_path, {**common, "rare.md": "---\ntype: T\ntitle: item\ndescription: d\n---\nzephyr\n"})
+    index = build_index(tmp_path)
+    common_hit = next(h for h in search(index, "widget") if h.cid == "common0")
+    rare_hit = search(index, "zephyr")[0]
+    assert rare_hit.score > common_hit.score
+
+
+def test_search_stopwords_do_not_manufacture_confident_matches(tmp_path):
+    """A query built mostly of stopwords plus one unrelated real word should not
+    outscore a document that genuinely matches the query's only content word."""
+    _bundle(
+        tmp_path,
+        {
+            "unrelated.md": (
+                "---\ntype: T\ntitle: Token Compression\ndescription: d\n---\n"
+                "How do I use the token compression CLI? See the docs.\n"
+            ),
+            "relevant.md": (
+                "---\ntype: T\ntitle: ZeroTier Token Rotation\ndescription: d\n---\n"
+                "Rotate the ZeroTier API token via the Central API.\n"
+            ),
+        },
+    )
+    hits = search(build_index(tmp_path), "how do I rotate the ZeroTier API token")
+    assert hits[0].cid == "relevant"
+
+
+def test_search_stopwords_alone_return_no_hits(tmp_path):
+    _bundle(tmp_path, {"a.md": "---\ntype: T\ntitle: A\ndescription: d\n---\nThe quick fox.\n"})
+    assert search(build_index(tmp_path), "how do the a an") == []
+
+
+def test_search_single_char_tokens_ignored(tmp_path):
+    _bundle(tmp_path, {"a.md": "---\ntype: T\ntitle: I\ndescription: d\n---\nx\n"})
+    # A bare "I" query should not match purely on the single-character token.
+    assert search(build_index(tmp_path), "i") == []

@@ -9,7 +9,7 @@ description: Canonical reference for the okf CLI and okf-mcp server — each too
 
 Canonical reference for the `okf` CLI and the `okf-mcp` server. Each tool's **canonical description** — the agent trigger surface — lives in a `<!-- desc:start -->` … `<!-- desc:end -->` block below; the test suite asserts these match the strings embedded in [okf-mcp](/interfaces/okf-mcp.md), so this page and the server never drift (see [Tool doc sync](/conventions/tool-doc-sync.md)).
 
-Most commands operate on a *bundle* — a directory of OKF `.md` concept files. The five MCP tools are `search`, `read_concept` (with `depth` for [progressive context](/architecture/progressive-context.md)), `validate`, `create_concept`, and `init_bundle`; the `okf` CLI mirrors them plus `index regen`, `code index`, and `serve`. The CLI also has a skill-only `agent install` command for installing OKF skills into Claude Code or Codex.
+Most commands operate on a *bundle* — a directory of OKF `.md` concept files. The six MCP tools are `search`, `read_concept` (with `depth` for [progressive context](/architecture/progressive-context.md)), `validate`, `create_concept`, `init_bundle`, and `list_bundles`; the `okf` CLI mirrors the first five plus `index regen`, `code index`, and `serve`. The CLI also has a skill-only `agent install` command for installing OKF skills into Claude Code or Codex.
 
 ## search
 
@@ -63,6 +63,20 @@ Initialize (or re-initialize) a bundle root via MCP — writes `index.md` with `
 
 <!-- desc:start -->
 Initialize a registered OKF bundle root by writing root index.md with okf_version. Creates the directory if needed and rewrites index.md if it already exists, so use it before authoring a new bundle or when intentionally resetting the root index metadata. Example: init_bundle(bundle='wiki').
+<!-- desc:end -->
+
+## list_bundles
+
+List every bundle name registered on this server process. The registered name is not
+necessarily the bundle's conceptual name — a bare `PATH` CLI argument registers under its
+directory basename (so a container mounting a bundle at `/bundle` registers it as `bundle`),
+while an explicit `NAME=PATH` argument names it independently. Call this when you don't
+already know which `bundle` value the other tools expect.
+
+- **MCP:** `list_bundles() -> [{bundle, path}, ...]`
+
+<!-- desc:start -->
+List every bundle name registered on this server, the only valid values for the 'bundle' argument every other tool requires. Call this first if you don't already know the registered name — it is not always the same as the corpus's conceptual name (e.g. a server may register a bundle as 'bundle' if that is its mount directory's basename). Example: list_bundles().
 <!-- desc:end -->
 
 ## Build commands (CLI only)
