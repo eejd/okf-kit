@@ -61,7 +61,7 @@ _READ_DESC = (
 )
 
 _VALIDATE_DESC = (
-    "Validate an OKF bundle against v0.1 conformance (SPEC §9). Returns "
+    "Validate an OKF bundle against v0.2 conformance (SPEC §11). Returns "
     "{conformant, errors, warnings, info}. Errors such as missing frontmatter, invalid "
     "frontmatter, or empty type block conformance. Warnings such as missing title/description, "
     "invalid cids, and broken links are non-blocking. Info includes extension keys, nested "
@@ -353,7 +353,7 @@ def tool_create_concept(
 
 
 def tool_init_bundle(
-    reg: BundleRegistry, bundle: BundleName, okf_version: OkfVersion = "0.1"
+    reg: BundleRegistry, bundle: BundleName, okf_version: OkfVersion = "0.2"
 ) -> dict[str, Any]:
     """Initialize a bundle root via MCP (idempotent)."""
     path = init_bundle(reg.get(bundle), okf_version=okf_version)
@@ -463,7 +463,7 @@ def make_server(
             openWorldHint=False,
         ),
     )
-    def _init_bundle(bundle: BundleName, okf_version: OkfVersion = "0.1") -> dict[str, Any]:
+    def _init_bundle(bundle: BundleName, okf_version: OkfVersion = "0.2") -> dict[str, Any]:
         return tool_init_bundle(reg, bundle, okf_version)
 
     @server.tool(

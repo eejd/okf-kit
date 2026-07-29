@@ -12,7 +12,7 @@ description: init_bundle and create_concept — bundle scaffolding and per-type 
 
 Built-in template types: `Table`, `Metric`, `Runbook`, `Playbook`, `API` (plus a `_generic` fallback). Each ships a body skeleton with a depth heading (`# Schema`, `# Definition`, `# Steps`, `# Endpoints`, `# Overview`).
 
-- **`init_bundle(root, okf_version='0.1', name=None)`** — `mkdir -p`, then write a root `index.md` whose only frontmatter is `okf_version` and whose body is `# <name or dir name>`.
+- **`init_bundle(root, okf_version='0.2', name=None)`** — `mkdir -p`, then write a root `index.md` whose only frontmatter is `okf_version` and whose body is `# <name or dir name>`.
 - **`create_concept(root, cid, type, *, title, description, tags, body, extra)`** — validate `cid` segments; check the **parent** of the candidate path is contained (write-path mirror of `resolve_cid_path`); assemble frontmatter (`type` plus optional `title`/`description`/`tags`/`extra`); `mkdir -p` the parent; open with mode `"x"` (`O_CREAT|O_EXCL`) so an existing file is never clobbered — atomic exclusive create with no TOCTOU window.
 
 A missing `body` falls back to the type template; an explicit body (as the MCP tool always sends) replaces it.

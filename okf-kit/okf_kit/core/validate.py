@@ -1,4 +1,4 @@
-"""OKF v0.1 conformance validation (SPEC §9; REQ-BM-04, REQ-API-01..04).
+"""OKF v0.2 conformance validation (SPEC §11; REQ-BM-04, REQ-API-01..04).
 
 Walks a bundle, classifies every ``.md`` into errors / warnings / info, and
 returns a :class:`Report`. The validator is the *only* judge — the parser is
@@ -17,6 +17,18 @@ Severity policy:
   actually need a human's attention), nested ``index.md`` carrying
   frontmatter (a forward-compat sub-bundle marker — NOT an error), missing
   or mismatched ``okf_version``, empty bundles.
+
+v0.2 adds five known frontmatter keys, all optional and none validated
+beyond presence — per the spec's own permissive-conformance rule, consumers
+MUST NOT reject a concept for a missing optional family (provenance, trust,
+lifecycle, computation), so this validator does not shape-check
+``generated``/``verified``/``sources`` beyond "known key, not an extension":
+``status`` (draft/stable/deprecated lifecycle marker — SPEC §5.4),
+``stale_after`` (staleness date — SPEC §5.5), ``sources`` (provenance list —
+SPEC §5.1), ``generated``/``verified`` (trust fields — SPEC §5.2; trust-tier
+derivation from ``verified`` — SPEC §5.3).
+The v0.1 ``timestamp`` field remains recognized for backward compatibility
+even though v0.2 introduces ``generated.at`` for the same purpose.
 """
 from __future__ import annotations
 
@@ -29,14 +41,28 @@ from okf_kit.core.links import broken_links, cid_segments_valid, iter_concept_fi
 from okf_kit.core.parse import parse_concept
 
 _KNOWN_FRONTMATTER_KEYS = frozenset(
-    {"type", "title", "description", "resource", "tags", "timestamp", "okf_version"}
+    {
+        "type",
+        "title",
+        "description",
+        "resource",
+        "tags",
+        "timestamp",
+        "okf_version",
+        # OKF v0.2 additions (SPEC §5):
+        "status",
+        "stale_after",
+        "sources",
+        "generated",
+        "verified",
+    }
 )
 # How many example concept ids to attach to an aggregated extension-key finding.
 _MAX_EXTENSION_KEY_EXAMPLES = 3
 # Warn only on the human-facing recommended fields; resource/tags/timestamp are
 # intentionally optional (often legitimately absent) and stay silent.
 _RECOMMENDED_WARN_FIELDS = ("title", "description")
-_SUPPORTED_OKF_VERSION = "0.1"
+_SUPPORTED_OKF_VERSION = "0.2"
 
 
 @dataclass
@@ -68,7 +94,7 @@ class Report:
 
 
 def validate_bundle(root: Path) -> Report:
-    """Validate every ``.md`` under ``root`` against OKF v0.1 conformance."""
+    """Validate every ``.md`` under ``root`` against OKF v0.2 conformance."""
     root = Path(root).resolve()
     report = Report()
     concept_count = 0

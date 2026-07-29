@@ -39,7 +39,7 @@ tests. Bug fixes start with a failing test that reproduces the bug.
 - **The core is pure.** `okf_kit/core/` is deterministic, no network, no
   randomness. `cli` and `mcp` are *thin* wrappers — never duplicate logic between
   them. New behavior goes in `core/`, then both surfaces call it.
-- **Permissive consumer (SPEC §9).** Parsing never raises on malformed input; it
+- **Permissive consumer (SPEC §11).** Parsing never raises on malformed input; it
   degrades and lets `validate` report. `validate` is the only judge.
 - **Security boundary — paths.** Every caller-supplied concept id and every link
   target is resolved and confined to the bundle root. Do **not** reach for raw
