@@ -87,11 +87,11 @@ _INIT_DESC = (
 )
 
 _LIST_BUNDLES_DESC = (
-    "List every bundle name registered on this server, the only valid values for the "
-    "'bundle' argument every other tool requires. Call this first if you don't already know "
-    "the registered name — it is not always the same as the corpus's conceptual name (e.g. a "
-    "server may register a bundle as 'bundle' if that is its mount directory's basename). "
-    "Example: list_bundles()."
+    "List every bundle name registered on this server, alphabetically sorted (not "
+    "registration order), the only valid values for the 'bundle' argument every other tool "
+    "requires. Call this first if you don't already know the registered name — it is not "
+    "always the same as the corpus's conceptual name (e.g. a server may register a bundle as "
+    "'bundle' if that is its mount directory's basename). Example: list_bundles()."
 )
 
 BundleName = Annotated[
@@ -235,6 +235,11 @@ class BundleRegistry:
     """
 
     def __init__(self, bundles: dict[str, Any] | list[tuple[str, Any]]) -> None:
+        # dict inputs can never trigger the duplicate check below — dict keys
+        # are unique by construction, so any duplicate was already silently
+        # resolved (last write wins) before this constructor ever sees it.
+        # The check only does real work for the list-of-pairs form, which is
+        # exactly why the CLI passes bundles as a list rather than a dict.
         items = bundles.items() if isinstance(bundles, dict) else bundles
         resolved: dict[str, Path] = {}
         for name, path in items:
@@ -254,6 +259,7 @@ class BundleRegistry:
         return self._bundles[name]
 
     def names(self) -> list[str]:
+        """Registered bundle names, alphabetically sorted (not registration order)."""
         return sorted(self._bundles)
 
 
@@ -514,8 +520,12 @@ def _parse_bundle_arg(raw: str) -> tuple[str, str]:
     behavior — this is why a container mounting a bundle at ``/bundle``
     registers it as the not-very-meaningful name ``bundle``). ``NAME=PATH``
     lets a deployment give the bundle a real name independent of its mount
-    point. ``=`` is not a valid path character on the platforms OKF targets,
-    so splitting on the first ``=`` is unambiguous.
+    point. Splitting on the first ``=`` is a convention, not a hard
+    guarantee: ``=`` *is* a legal character in a POSIX path (though rare in
+    practice for deployment mount points), so a bare path containing ``=``
+    would be misparsed as ``NAME=PATH``. Bundles are expected to be named
+    without ``=`` in this deployment; a directory that genuinely needs one
+    should use the explicit ``NAME=PATH`` form to disambiguate.
     """
     if "=" in raw:
         name, _, path = raw.partition("=")

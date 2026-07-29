@@ -67,16 +67,17 @@ Initialize a registered OKF bundle root by writing root index.md with okf_versio
 
 ## list_bundles
 
-List every bundle name registered on this server process. The registered name is not
-necessarily the bundle's conceptual name — a bare `PATH` CLI argument registers under its
-directory basename (so a container mounting a bundle at `/bundle` registers it as `bundle`),
-while an explicit `NAME=PATH` argument names it independently. Call this when you don't
-already know which `bundle` value the other tools expect.
+List every bundle name registered on this server process, alphabetically sorted (not
+registration order). The registered name is not necessarily the bundle's conceptual name —
+a bare `PATH` CLI argument registers under its directory basename (so a container mounting a
+bundle at `/bundle` registers it as `bundle`), while an explicit `NAME=PATH` argument names it
+independently. Call this when you don't already know which `bundle` value the other tools
+expect.
 
 - **MCP:** `list_bundles() -> [{bundle, path}, ...]`
 
 <!-- desc:start -->
-List every bundle name registered on this server, the only valid values for the 'bundle' argument every other tool requires. Call this first if you don't already know the registered name — it is not always the same as the corpus's conceptual name (e.g. a server may register a bundle as 'bundle' if that is its mount directory's basename). Example: list_bundles().
+List every bundle name registered on this server, alphabetically sorted (not registration order), the only valid values for the 'bundle' argument every other tool requires. Call this first if you don't already know the registered name — it is not always the same as the corpus's conceptual name (e.g. a server may register a bundle as 'bundle' if that is its mount directory's basename). Example: list_bundles().
 <!-- desc:end -->
 
 ## Build commands (CLI only)

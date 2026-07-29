@@ -1,8 +1,8 @@
 """Full-text search over an OKF bundle (REQ-CONS-14..17, REQ-SRCH-01..04).
 
-Lightweight inverted index + weighted, IDF-scaled, length-normalized ranking
-(exact title > frontmatter > body), no external deps. Filters by ``type`` and
-``tag``. Deterministic order (score desc, then cid asc).
+Lightweight inverted index + weighted, IDF-scaled ranking (exact title >
+frontmatter > body), no external deps. Filters by ``type`` and ``tag``.
+Deterministic order (score desc, then cid asc).
 
 Ranking model: for each query term, the per-field weighted term frequency is
 multiplied by a smoothed inverse-document-frequency factor — terms that occur
@@ -127,7 +127,8 @@ class _Doc:
     frontmatter_terms: Counter[str]
     body_terms: Counter[str]
     length: int = 0
-    """Total term occurrences across all fields; drives length normalization."""
+    """Total term occurrences across all fields; tracked for external bundle
+    instrumentation only — not used in scoring (see module docstring)."""
 
 
 @dataclass

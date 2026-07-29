@@ -277,3 +277,32 @@ def test_main_transport_streamable_http_direct(tmp_path: Path, monkeypatch: pyte
     assert calls == ["streamable-http"]
     assert kwargs_seen[0]["host"] == "127.0.0.1"
     assert kwargs_seen[0]["port"] == 4021
+
+
+def test_main_name_equals_path_registers_under_explicit_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """End-to-end: a NAME=PATH CLI argument reaches make_server as a bundles
+    list that builds a real BundleRegistry under the explicit name — not just
+    _parse_bundle_arg in isolation. The FakeServer stands in only for the
+    FastMCP transport (.run()), which this test does not exercise; the
+    bundles value itself is real and passed straight through main()."""
+    from okf_kit import mcp as mcp_mod
+
+    mount_point = tmp_path / "mount-point-name-would-be-wrong"
+    mount_point.mkdir()
+    root = _bundle(mount_point)
+    registries_seen: list[mcp_mod.BundleRegistry] = []
+
+    class _FakeServer:
+        def run(self, transport: str = "stdio") -> None:
+            pass
+
+    def _spy_make_server(bundles: object, **kw: object) -> object:
+        registries_seen.append(mcp_mod.BundleRegistry(bundles))  # type: ignore[arg-type]
+        return _FakeServer()
+
+    monkeypatch.setattr(mcp_mod, "make_server", _spy_make_server)
+    mcp_mod.main([f"hive-dev={root}"])
+    assert registries_seen[0].names() == ["hive-dev"]
+    assert registries_seen[0].get("hive-dev") == root.resolve()

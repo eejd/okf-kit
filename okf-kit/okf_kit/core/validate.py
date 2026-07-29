@@ -190,7 +190,12 @@ def _check_concept(
     for key in concept.frontmatter:
         if key not in _KNOWN_FRONTMATTER_KEYS:
             extension_key_counts[key] += 1
-            extension_key_examples.setdefault(key, []).append(concept.cid)
+            examples = extension_key_examples.setdefault(key, [])
+            # Cap accumulation at the display limit — only ever a few examples
+            # are shown, so there is no reason to hold every cid in memory for
+            # a key used across a large bundle.
+            if len(examples) < _MAX_EXTENSION_KEY_EXAMPLES:
+                examples.append(concept.cid)
 
     for target in broken_links(concept.root, concept):
         report.warnings.append(
