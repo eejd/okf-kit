@@ -24,11 +24,23 @@ activated automatically for loopback binds.
 Tool descriptions are the agent trigger surface (design §11); the
 ``wiki/reference/tools.md`` concept is the source of truth and a test asserts
 they stay in sync.
+
+Every tool call emits one structured JSON line to **stderr** (never stdout —
+under stdio transport, stdout is the MCP JSON-RPC wire itself, and writing
+logs there would corrupt the protocol stream). This is Phase 1 of an
+instrumentation-before-splitting plan: rather than guessing whether/how to
+segregate a bundle, collect real usage signals first (zero-result rate,
+concept-read locality, bundle growth) and let that data decide. See
+:func:`_log_tool_call`.
 """
 
 from __future__ import annotations
 
+import json
+import sys
+import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -221,6 +233,35 @@ OkfVersion = Annotated[
 ]
 
 
+def _log_tool_call(tool: str, started_at: float, ok: bool, **fields: Any) -> None:
+    """Emit one structured JSON line to **stderr** for a completed tool call.
+
+    Phase 1 of an instrumentation-before-splitting plan for multi-bundle
+    knowledge bases: rather than guessing whether a bundle needs to be split
+    into several, collect real usage signals (zero-result queries, which
+    concepts get read vs. never touched, per-directory read locality) and
+    let that data decide. Deliberately dependency-free (stdlib only) and
+    deliberately never raises — a logging failure must never break the tool
+    call it describes, matching this codebase's existing "parser never
+    raises, validator is the only judge" discipline.
+
+    Deliberately **stderr**, not stdout: under stdio transport, stdout is the
+    MCP JSON-RPC wire itself, and writing logs there would corrupt the
+    protocol stream.
+    """
+    try:
+        record: dict[str, Any] = {
+            "ts": datetime.now(UTC).isoformat(),
+            "tool": tool,
+            "ok": ok,
+            "latency_ms": round((time.monotonic() - started_at) * 1000, 2),
+        }
+        record.update({k: v for k, v in fields.items() if v is not None})
+        print(json.dumps(record, default=str), file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
 class DuplicateBundleNameError(ValueError):
     """Raised when two bundle arguments would register under the same name."""
 
@@ -271,8 +312,24 @@ def tool_search(
     tag: TagFilter = None,
     limit: SearchLimit = 20,
 ) -> list[dict[str, Any]]:
-    index = build_index(reg.get(bundle))
-    return [_hit_dict(h) for h in search(index, query, type=type, tag=tag, limit=limit)]
+    started_at = time.monotonic()
+    ok = False
+    hits: list[Hit] = []
+    try:
+        index = build_index(reg.get(bundle))
+        hits = search(index, query, type=type, tag=tag, limit=limit)
+        ok = True
+        return [_hit_dict(h) for h in hits]
+    finally:
+        _log_tool_call(
+            "search",
+            started_at,
+            ok,
+            bundle=bundle,
+            query=query,
+            n_results=len(hits),
+            top_score=hits[0].score if hits else None,
+        )
 
 
 def tool_read_concept(
@@ -282,13 +339,38 @@ def tool_read_concept(
     depth: Depth = 0,
     token_budget: TokenBudget = 8000,
 ) -> str:
-    return context_mod.read_concept(
-        reg.get(bundle), concept_id, depth=depth, token_budget=token_budget
-    )
+    started_at = time.monotonic()
+    ok = False
+    try:
+        result = context_mod.read_concept(
+            reg.get(bundle), concept_id, depth=depth, token_budget=token_budget
+        )
+        ok = True
+        return result
+    finally:
+        _log_tool_call(
+            "read_concept", started_at, ok, bundle=bundle, concept_id=concept_id, depth=depth
+        )
 
 
 def tool_validate(reg: BundleRegistry, bundle: BundleName) -> dict[str, Any]:
-    return validate_bundle(reg.get(bundle)).to_dict()
+    started_at = time.monotonic()
+    ok = False
+    report: dict[str, Any] = {}
+    try:
+        report = validate_bundle(reg.get(bundle)).to_dict()
+        ok = True
+        return report
+    finally:
+        _log_tool_call(
+            "validate",
+            started_at,
+            ok,
+            bundle=bundle,
+            n_errors=len(report.get("errors", [])) if report else None,
+            n_warnings=len(report.get("warnings", [])) if report else None,
+            n_info=len(report.get("info", [])) if report else None,
+        )
 
 
 # Richness floor — the mechanism that makes "created via MCP => good info".
@@ -333,36 +415,56 @@ def tool_create_concept(
     plus arbitrary extension keys (``extra``) to ``core.templates.create_concept``.
     An explicit ``resource``/``timestamp`` arg overrides a same-named ``extra`` key.
     """
-    _check_richness(body)
-    extra_fm: dict[str, Any] = dict(extra) if extra else {}
-    if resource is not None:
-        extra_fm["resource"] = resource
-    if timestamp is not None:
-        extra_fm["timestamp"] = timestamp
-    path = create_concept(
-        reg.get(bundle),
-        cid,
-        type,
-        title=title,
-        description=description,
-        tags=tags,
-        body=body,
-        extra=extra_fm or None,
-    )
-    return {"created": True, "cid": cid, "path": str(path)}
+    started_at = time.monotonic()
+    ok = False
+    try:
+        _check_richness(body)
+        extra_fm: dict[str, Any] = dict(extra) if extra else {}
+        if resource is not None:
+            extra_fm["resource"] = resource
+        if timestamp is not None:
+            extra_fm["timestamp"] = timestamp
+        path = create_concept(
+            reg.get(bundle),
+            cid,
+            type,
+            title=title,
+            description=description,
+            tags=tags,
+            body=body,
+            extra=extra_fm or None,
+        )
+        ok = True
+        return {"created": True, "cid": cid, "path": str(path)}
+    finally:
+        _log_tool_call("create_concept", started_at, ok, bundle=bundle, cid=cid, type=type)
 
 
 def tool_init_bundle(
     reg: BundleRegistry, bundle: BundleName, okf_version: OkfVersion = "0.2"
 ) -> dict[str, Any]:
     """Initialize a bundle root via MCP (idempotent)."""
-    path = init_bundle(reg.get(bundle), okf_version=okf_version)
-    return {"initialized": True, "path": str(path)}
+    started_at = time.monotonic()
+    ok = False
+    try:
+        path = init_bundle(reg.get(bundle), okf_version=okf_version)
+        ok = True
+        return {"initialized": True, "path": str(path)}
+    finally:
+        _log_tool_call("init_bundle", started_at, ok, bundle=bundle, okf_version=okf_version)
 
 
 def tool_list_bundles(reg: BundleRegistry) -> list[dict[str, Any]]:
     """List every registered bundle name and its resolved root path."""
-    return [{"bundle": name, "path": str(reg.get(name))} for name in reg.names()]
+    started_at = time.monotonic()
+    ok = False
+    names: list[str] = []
+    try:
+        names = reg.names()
+        ok = True
+        return [{"bundle": name, "path": str(reg.get(name))} for name in names]
+    finally:
+        _log_tool_call("list_bundles", started_at, ok, n_bundles=len(names))
 
 
 def make_server(
