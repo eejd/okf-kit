@@ -6,7 +6,7 @@ description: validate_bundle walks a bundle, classifies every .md into errors/wa
 ---
 # Overview
 
-`okf_kit/core/validate.py` implements OKF v0.1 conformance (SPEC §9; REQ-BM-04, REQ-API-01..04). It walks every `.md` under the root via the safe enumerator, parses each, and classifies findings into three severities. It is **the only judge** — the permissive parser never raises; this module turns parse diagnostics into conformance findings. See [Conformance](/format/conformance.md) for the policy.
+`okf_kit/core/validate.py` implements OKF v0.2 conformance (SPEC §11; REQ-BM-04, REQ-API-01..04). It walks every `.md` under the root via the safe enumerator, parses each, and classifies findings into three severities. It is **the only judge** — the permissive parser never raises; this module turns parse diagnostics into conformance findings. See [Conformance](/format/conformance.md) for the policy.
 
 # Definition
 

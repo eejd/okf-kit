@@ -1,4 +1,4 @@
-"""Tests for okf_kit.core.validate — SPEC §9 conformance (REQ-BM-04, REQ-API-01..04)."""
+"""Tests for okf_kit.core.validate — SPEC §11 conformance (REQ-BM-04, REQ-API-01..04)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -62,6 +62,29 @@ def test_extension_key_is_info(tmp_path):
     assert _codes(r.info, "extension-key")
 
 
+def test_okf_v02_fields_are_known_not_extension_keys(tmp_path):
+    """The five OKF v0.2 fields (SPEC §5) are recognized frontmatter, not
+    unknown extension keys — regression guard for _KNOWN_FRONTMATTER_KEYS."""
+    _w(
+        tmp_path,
+        "a.md",
+        "---\n"
+        "type: T\n"
+        "title: A\n"
+        "description: d.\n"
+        "status: draft\n"
+        "stale_after: '2027-01-01'\n"
+        "sources: [{id: s1, resource: 'https://example.com'}]\n"
+        "generated: {by: 'agent/model', at: '2026-07-01T00:00:00Z'}\n"
+        "verified: [{by: 'human:dep', at: '2026-07-02T00:00:00Z'}]\n"
+        "---\n"
+        "body\n",
+    )
+    r = validate_bundle(tmp_path)
+    assert not _codes(r.info, "extension-key")
+    assert r.conformant
+
+
 def test_broken_link_is_warning(tmp_path):
     _w(tmp_path, "a.md", "---\ntype: T\ntitle: A\ndescription: d.\n---\n[ghost](ghost.md)\n")
     r = validate_bundle(tmp_path)
@@ -96,11 +119,16 @@ def test_missing_okf_version_is_info(tmp_path):
     assert _codes(r.info, "okf-version-missing")
 
 
-def test_okf_version_present_no_missing_info(tmp_path):
+def test_okf_version_v01_present_emits_mismatch_not_missing(tmp_path):
+    """A v0.1 bundle (this validator now supports v0.2) is not "missing" its
+    version — it correctly gets a mismatch info finding instead, and stays
+    conformant (0 errors): version mismatch is soft guidance, not a block."""
     _w(tmp_path, "index.md", "---\nokf_version: '0.1'\n---\n# Root\n")
     _w(tmp_path, "a.md", "---\ntype: T\ntitle: A\ndescription: d.\n---\nx\n")
     r = validate_bundle(tmp_path)
     assert not _codes(r.info, "okf-version-missing")
+    assert _codes(r.info, "okf-version-mismatch")
+    assert r.conformant
 
 
 def test_okf_version_mismatch_is_info(tmp_path):

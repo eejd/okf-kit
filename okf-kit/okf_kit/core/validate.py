@@ -25,7 +25,8 @@ lifecycle, computation), so this validator does not shape-check
 ``generated``/``verified``/``sources`` beyond "known key, not an extension":
 ``status`` (draft/stable/deprecated lifecycle marker — SPEC §5.4),
 ``stale_after`` (staleness date — SPEC §5.5), ``sources`` (provenance list —
-SPEC §5.1), ``generated``/``verified`` (trust-tier fields — SPEC §5.2/5.3).
+SPEC §5.1), ``generated``/``verified`` (trust fields — SPEC §5.2; trust-tier
+derivation from ``verified`` — SPEC §5.3).
 The v0.1 ``timestamp`` field remains recognized for backward compatibility
 even though v0.2 introduces ``generated.at`` for the same purpose.
 """

@@ -59,7 +59,7 @@ Create one substantive OKF concept. Use after searching/reading nearby concepts 
 
 Initialize (or re-initialize) a bundle root via MCP — writes `index.md` with `okf_version`. Idempotent.
 
-- **MCP:** `init_bundle(bundle, okf_version='0.1') -> {initialized, path}`
+- **MCP:** `init_bundle(bundle, okf_version='0.2') -> {initialized, path}`
 
 <!-- desc:start -->
 Initialize a registered OKF bundle root by writing root index.md with okf_version. Creates the directory if needed and rewrites index.md if it already exists, so use it before authoring a new bundle or when intentionally resetting the root index metadata. Example: init_bundle(bundle='wiki').
