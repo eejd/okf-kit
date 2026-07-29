@@ -9,9 +9,12 @@ from okf_kit.core.context import ConceptNotFound
 from okf_kit.core.parse import parse_concept
 from okf_kit.mcp import (
     BundleRegistry,
+    DuplicateBundleNameError,
+    _parse_bundle_arg,
     make_server,
     tool_create_concept,
     tool_init_bundle,
+    tool_list_bundles,
     tool_read_concept,
     tool_search,
     tool_validate,
@@ -64,9 +67,51 @@ def test_make_server_registers_all_tools(tmp_path: Path):
     server = make_server({"kb": _bundle(tmp_path)})
     tools = asyncio.run(server.list_tools())
     names = {t.name for t in tools}
-    assert {"search", "read_concept", "validate", "create_concept", "init_bundle"} <= names
+    assert {
+        "search", "read_concept", "validate", "create_concept", "init_bundle", "list_bundles",
+    } <= names
     for tool in tools:
         assert tool.description and len(tool.description) > 30  # agent-triggerable
+
+
+def test_registry_rejects_duplicate_names_from_list_form(tmp_path: Path):
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    with pytest.raises(DuplicateBundleNameError):
+        BundleRegistry([("kb", a), ("kb", b)])
+
+
+def test_registry_accepts_dict_form_unchanged(tmp_path: Path):
+    root = _bundle(tmp_path)
+    reg = BundleRegistry({"kb": root})
+    assert reg.names() == ["kb"]
+
+
+def test_tool_list_bundles_reports_registered_names(tmp_path: Path):
+    reg = BundleRegistry({"kb": _bundle(tmp_path)})
+    listed = tool_list_bundles(reg)
+    assert listed == [{"bundle": "kb", "path": str(reg.get("kb"))}]
+
+
+def test_parse_bundle_arg_bare_path_uses_basename():
+    name, path = _parse_bundle_arg("/some/dir/mybundle")
+    assert name == "mybundle"
+    assert path == "/some/dir/mybundle"
+
+
+def test_parse_bundle_arg_name_equals_path():
+    name, path = _parse_bundle_arg("hive-dev=/bundle")
+    assert name == "hive-dev"
+    assert path == "/bundle"
+
+
+def test_parse_bundle_arg_rejects_empty_name_or_path():
+    with pytest.raises(ValueError):
+        _parse_bundle_arg("=/bundle")
+    with pytest.raises(ValueError):
+        _parse_bundle_arg("name=")
 
 
 def test_make_server_publishes_argument_metadata_and_annotations(tmp_path: Path):
@@ -232,3 +277,32 @@ def test_main_transport_streamable_http_direct(tmp_path: Path, monkeypatch: pyte
     assert calls == ["streamable-http"]
     assert kwargs_seen[0]["host"] == "127.0.0.1"
     assert kwargs_seen[0]["port"] == 4021
+
+
+def test_main_name_equals_path_registers_under_explicit_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """End-to-end: a NAME=PATH CLI argument reaches make_server as a bundles
+    list that builds a real BundleRegistry under the explicit name — not just
+    _parse_bundle_arg in isolation. The FakeServer stands in only for the
+    FastMCP transport (.run()), which this test does not exercise; the
+    bundles value itself is real and passed straight through main()."""
+    from okf_kit import mcp as mcp_mod
+
+    mount_point = tmp_path / "mount-point-name-would-be-wrong"
+    mount_point.mkdir()
+    root = _bundle(mount_point)
+    registries_seen: list[mcp_mod.BundleRegistry] = []
+
+    class _FakeServer:
+        def run(self, transport: str = "stdio") -> None:
+            pass
+
+    def _spy_make_server(bundles: object, **kw: object) -> object:
+        registries_seen.append(mcp_mod.BundleRegistry(bundles))  # type: ignore[arg-type]
+        return _FakeServer()
+
+    monkeypatch.setattr(mcp_mod, "make_server", _spy_make_server)
+    mcp_mod.main([f"hive-dev={root}"])
+    assert registries_seen[0].names() == ["hive-dev"]
+    assert registries_seen[0].get("hive-dev") == root.resolve()

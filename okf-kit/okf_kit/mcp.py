@@ -1,10 +1,16 @@
 """The ``okf-mcp`` server (FastMCP, transport-agnostic).
 
-Exposes an OKF bundle to MCP clients (Claude Code, any MCP client) as five
+Exposes an OKF bundle to MCP clients (Claude Code, any MCP client) as six
 tools — ``search``, ``read_concept``, ``validate``, ``create_concept``,
-``init_bundle`` — plus an ``okf://<bundle>/concepts/<cid>.md`` resource per
-concept.  Tools are thin wrappers over :mod:`okf_kit.core`; the bundle is
-registered at startup by directory name.
+``init_bundle``, ``list_bundles`` — plus an ``okf://<bundle>/concepts/<cid>.md``
+resource per concept. Tools are thin wrappers over :mod:`okf_kit.core`.
+
+Bundle registration: each CLI positional argument is either a bare path
+(registered under its directory basename, the original behavior — e.g. a
+container mounting a bundle at ``/bundle`` registers it as ``bundle``) or an
+explicit ``NAME=PATH`` form to give a bundle a name independent of its mount
+point or directory name. Registering two bundles under the same name is a
+startup error, not a silent overwrite.
 
 Transports (selectable at runtime via ``--transport``):
   stdio           — default; classic pipe/subprocess mode.
@@ -78,6 +84,14 @@ _INIT_DESC = (
     "Creates the directory if needed and rewrites index.md if it already exists, so use it "
     "before authoring a new bundle or when intentionally resetting the root index metadata. "
     "Example: init_bundle(bundle='wiki')."
+)
+
+_LIST_BUNDLES_DESC = (
+    "List every bundle name registered on this server, alphabetically sorted (not "
+    "registration order), the only valid values for the 'bundle' argument every other tool "
+    "requires. Call this first if you don't already know the registered name — it is not "
+    "always the same as the corpus's conceptual name (e.g. a server may register a bundle as "
+    "'bundle' if that is its mount directory's basename). Example: list_bundles()."
 )
 
 BundleName = Annotated[
@@ -207,21 +221,45 @@ OkfVersion = Annotated[
 ]
 
 
-class BundleRegistry:
-    """Maps a registered bundle name to its resolved root path."""
+class DuplicateBundleNameError(ValueError):
+    """Raised when two bundle arguments would register under the same name."""
 
-    def __init__(self, bundles: dict[str, Any]) -> None:
-        self._bundles: dict[str, Path] = {
-            name: Path(path).resolve() for name, path in bundles.items()
-        }
+
+class BundleRegistry:
+    """Maps a registered bundle name to its resolved root path.
+
+    Accepts either a ``dict[name, path]`` directly, or (from the CLI) an
+    ordered list of ``(name, path)`` pairs — the list form is what detects a
+    duplicate name, since a plain ``dict`` literal would already have
+    silently discarded the earlier entry before the registry ever saw it.
+    """
+
+    def __init__(self, bundles: dict[str, Any] | list[tuple[str, Any]]) -> None:
+        # dict inputs can never trigger the duplicate check below — dict keys
+        # are unique by construction, so any duplicate was already silently
+        # resolved (last write wins) before this constructor ever sees it.
+        # The check only does real work for the list-of-pairs form, which is
+        # exactly why the CLI passes bundles as a list rather than a dict.
+        items = bundles.items() if isinstance(bundles, dict) else bundles
+        resolved: dict[str, Path] = {}
+        for name, path in items:
+            if name in resolved:
+                raise DuplicateBundleNameError(
+                    f"bundle name {name!r} is already registered "
+                    f"(paths: {resolved[name]} and {Path(path).resolve()}) — "
+                    "give each bundle a distinct NAME=PATH"
+                )
+            resolved[name] = Path(path).resolve()
+        self._bundles: dict[str, Path] = resolved
 
     def get(self, name: str) -> Path:
         if name not in self._bundles:
-            registered = ", ".join(self._bundles) or "none"
+            registered = ", ".join(self.names()) or "none"
             raise KeyError(f"unknown bundle {name!r} (registered: {registered})")
         return self._bundles[name]
 
     def names(self) -> list[str]:
+        """Registered bundle names, alphabetically sorted (not registration order)."""
         return sorted(self._bundles)
 
 
@@ -322,8 +360,13 @@ def tool_init_bundle(
     return {"initialized": True, "path": str(path)}
 
 
+def tool_list_bundles(reg: BundleRegistry) -> list[dict[str, Any]]:
+    """List every registered bundle name and its resolved root path."""
+    return [{"bundle": name, "path": str(reg.get(name))} for name in reg.names()]
+
+
 def make_server(
-    bundles: dict[str, Any],
+    bundles: dict[str, Any] | list[tuple[str, Any]],
     *,
     host: str = "127.0.0.1",
     port: int = 4020,
@@ -331,7 +374,9 @@ def make_server(
     """Build a FastMCP server with tools + per-concept ``okf://`` resources.
 
     Args:
-        bundles: Mapping of bundle name to bundle root path.
+        bundles: Mapping of bundle name to bundle root path, or an ordered
+            list of ``(name, path)`` pairs (the list form is required to
+            detect a duplicate name — see :class:`BundleRegistry`).
         host: Bind address for HTTP/SSE transports (default loopback ``127.0.0.1``).
               Passed to :class:`FastMCP`; DNS-rebinding protection is enabled
               automatically for loopback addresses.
@@ -421,6 +466,15 @@ def make_server(
     def _init_bundle(bundle: BundleName, okf_version: OkfVersion = "0.1") -> dict[str, Any]:
         return tool_init_bundle(reg, bundle, okf_version)
 
+    @server.tool(
+        name="list_bundles",
+        title="List registered bundles",
+        description=_LIST_BUNDLES_DESC,
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+    )
+    def _list_bundles() -> list[dict[str, Any]]:
+        return tool_list_bundles(reg)
+
     _register_resources(server, reg)
     return server
 
@@ -459,6 +513,30 @@ def _hit_dict(hit: Hit) -> dict[str, Any]:
     }
 
 
+def _parse_bundle_arg(raw: str) -> tuple[str, str]:
+    """Parse one CLI bundle argument: either ``NAME=PATH`` or a bare ``PATH``.
+
+    A bare path is registered under its directory basename (the original
+    behavior — this is why a container mounting a bundle at ``/bundle``
+    registers it as the not-very-meaningful name ``bundle``). ``NAME=PATH``
+    lets a deployment give the bundle a real name independent of its mount
+    point. Splitting on the first ``=`` is a convention, not a hard
+    guarantee: ``=`` *is* a legal character in a POSIX path (though rare in
+    practice for deployment mount points), so a bare path containing ``=``
+    would be misparsed as ``NAME=PATH``. Bundles are expected to be named
+    without ``=`` in this deployment; a directory that genuinely needs one
+    should use the explicit ``NAME=PATH`` form to disambiguate.
+    """
+    if "=" in raw:
+        name, _, path = raw.partition("=")
+        name = name.strip()
+        path = path.strip()
+        if not name or not path:
+            raise ValueError(f"invalid NAME=PATH bundle argument: {raw!r}")
+        return name, path
+    return Path(raw).name, raw
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -467,12 +545,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="okf-mcp",
         description=(
-            "OKF MCP server. Registers each bundle by its directory name. "
+            "OKF MCP server. Each bundle argument is either a bare directory path "
+            "(registered under its directory basename) or an explicit NAME=PATH to name "
+            "it independently of its mount point/directory name. "
             "Use --transport to select stdio (default), streamable-http, or sse."
         ),
     )
     parser.add_argument(
-        "bundles", nargs="+", help="Bundle directories to serve (registered by directory name)."
+        "bundles",
+        nargs="+",
+        help=(
+            "Bundle directories to serve — PATH (registered by directory basename) or "
+            "NAME=PATH (registered under an explicit name)."
+        ),
     )
     parser.add_argument(
         "--transport",
@@ -496,7 +581,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     transport: str = _TRANSPORT_ALIASES.get(args.transport, args.transport)
-    bundles = {Path(b).name: Path(b) for b in args.bundles}
+    bundles = [_parse_bundle_arg(b) for b in args.bundles]
     make_server(bundles, host=args.host, port=args.port).run(transport=transport)  # type: ignore[arg-type]
     return 0
 

@@ -10,12 +10,17 @@ Severity policy:
   ``type``, malformed reserved files.
 - **warnings**: missing recommended fields (``title``/``description``), broken
   internal links.
-- **info**: extension frontmatter keys, nested ``index.md`` carrying
-  frontmatter (a forward-compat sub-bundle marker — NOT an error), missing or
-  mismatched ``okf_version``, empty bundles.
+- **info**: extension frontmatter keys (aggregated one finding per distinct
+  key, not one per concept — a bundle that leans on extension keys
+  everywhere, as a dialect layer typically does, would otherwise emit one
+  finding per key per concept and bury the handful of findings that
+  actually need a human's attention), nested ``index.md`` carrying
+  frontmatter (a forward-compat sub-bundle marker — NOT an error), missing
+  or mismatched ``okf_version``, empty bundles.
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -26,6 +31,8 @@ from okf_kit.core.parse import parse_concept
 _KNOWN_FRONTMATTER_KEYS = frozenset(
     {"type", "title", "description", "resource", "tags", "timestamp", "okf_version"}
 )
+# How many example concept ids to attach to an aggregated extension-key finding.
+_MAX_EXTENSION_KEY_EXAMPLES = 3
 # Warn only on the human-facing recommended fields; resource/tags/timestamp are
 # intentionally optional (often legitimately absent) and stay silent.
 _RECOMMENDED_WARN_FIELDS = ("title", "description")
@@ -67,6 +74,8 @@ def validate_bundle(root: Path) -> Report:
     concept_count = 0
     root_okf_version: str | None = None
     root_index_seen = False
+    extension_key_counts: Counter[str] = Counter()
+    extension_key_examples: dict[str, list[str]] = {}
 
     for md in iter_concept_files(root):
         concept = parse_concept(md, root)
@@ -112,7 +121,18 @@ def validate_bundle(root: Path) -> Report:
             continue
 
         concept_count += 1
-        _check_concept(report, concept)
+        _check_concept(report, concept, extension_key_counts, extension_key_examples)
+
+    for key, count in sorted(extension_key_counts.items()):
+        examples = extension_key_examples.get(key, [])[:_MAX_EXTENSION_KEY_EXAMPLES]
+        suffix = f" (e.g. {', '.join(examples)})" if examples else ""
+        report.info.append(
+            Finding(
+                "info",
+                "extension-key",
+                f"extension frontmatter key '{key}' used on {count} concept(s){suffix}",
+            )
+        )
 
     if concept_count == 0:
         report.info.append(Finding("info", "empty-bundle", "bundle has no concept files"))
@@ -121,7 +141,12 @@ def validate_bundle(root: Path) -> Report:
     return report
 
 
-def _check_concept(report: Report, concept: Any) -> None:
+def _check_concept(
+    report: Report,
+    concept: Any,
+    extension_key_counts: Counter[str],
+    extension_key_examples: dict[str, list[str]],
+) -> None:
     if concept.frontmatter_error:
         report.errors.append(
             Finding("error", "frontmatter-invalid", concept.frontmatter_error,
@@ -164,10 +189,13 @@ def _check_concept(report: Report, concept: Any) -> None:
 
     for key in concept.frontmatter:
         if key not in _KNOWN_FRONTMATTER_KEYS:
-            report.info.append(
-                Finding("info", "extension-key", f"extension frontmatter key '{key}'",
-                        concept.cid, concept.path)
-            )
+            extension_key_counts[key] += 1
+            examples = extension_key_examples.setdefault(key, [])
+            # Cap accumulation at the display limit — only ever a few examples
+            # are shown, so there is no reason to hold every cid in memory for
+            # a key used across a large bundle.
+            if len(examples) < _MAX_EXTENSION_KEY_EXAMPLES:
+                examples.append(concept.cid)
 
     for target in broken_links(concept.root, concept):
         report.warnings.append(
