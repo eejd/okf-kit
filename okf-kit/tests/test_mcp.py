@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,69 @@ def test_tool_validate_returns_report_dict(tmp_path: Path):
     report = tool_validate(reg, "kb")
     assert report["conformant"] is True
     assert "errors" in report and "warnings" in report and "info" in report
+
+
+# --- Tool-call logging (stderr, never stdout — see _log_tool_call docstring) ---
+
+
+def _last_log_record(capsys: pytest.CaptureFixture) -> dict:
+    captured = capsys.readouterr()
+    assert captured.out == "", "tool-call logs must never write to stdout (the MCP wire)"
+    lines = [line for line in captured.err.splitlines() if line.strip()]
+    assert lines, "expected at least one log line on stderr"
+    return json.loads(lines[-1])
+
+
+def test_tool_search_logs_to_stderr_not_stdout(tmp_path: Path, capsys: pytest.CaptureFixture):
+    reg = BundleRegistry({"kb": _bundle(tmp_path)})
+    tool_search(reg, "kb", "alpha")
+    record = _last_log_record(capsys)
+    assert record["tool"] == "search"
+    assert record["ok"] is True
+    assert record["bundle"] == "kb"
+    assert record["query"] == "alpha"
+    assert record["n_results"] == 1
+    assert record["top_score"] > 0
+    assert record["latency_ms"] >= 0
+    assert "ts" in record
+
+
+def test_tool_search_no_hits_logs_zero_results_and_no_top_score(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+):
+    reg = BundleRegistry({"kb": _bundle(tmp_path)})
+    tool_search(reg, "kb", "zzzznomatch")
+    record = _last_log_record(capsys)
+    assert record["n_results"] == 0
+    assert "top_score" not in record  # None fields are dropped, not logged as null
+
+
+def test_tool_read_concept_logs_even_on_not_found(tmp_path: Path, capsys: pytest.CaptureFixture):
+    reg = BundleRegistry({"kb": _bundle(tmp_path)})
+    with pytest.raises(ConceptNotFound):
+        tool_read_concept(reg, "kb", "nope")
+    record = _last_log_record(capsys)
+    assert record["tool"] == "read_concept"
+    assert record["ok"] is False
+    assert record["concept_id"] == "nope"
+
+
+def test_tool_validate_logs_finding_counts(tmp_path: Path, capsys: pytest.CaptureFixture):
+    reg = BundleRegistry({"kb": _bundle(tmp_path)})
+    tool_validate(reg, "kb")
+    record = _last_log_record(capsys)
+    assert record["tool"] == "validate"
+    assert record["n_errors"] == 0
+    assert isinstance(record["n_warnings"], int)
+    assert isinstance(record["n_info"], int)
+
+
+def test_tool_list_bundles_logs_count(tmp_path: Path, capsys: pytest.CaptureFixture):
+    reg = BundleRegistry({"kb": _bundle(tmp_path)})
+    tool_list_bundles(reg)
+    record = _last_log_record(capsys)
+    assert record["tool"] == "list_bundles"
+    assert record["n_bundles"] == 1
 
 
 def test_make_server_registers_all_tools(tmp_path: Path):
