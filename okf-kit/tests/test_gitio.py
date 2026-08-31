@@ -314,9 +314,8 @@ def test_sync_status_tracked_and_untracked(tmp_path: Path):
 
 
 def test_commit_retries_once_on_object_visibility_race(tmp_path: Path, monkeypatch):
-    """virtiofs-class negative-lookup race: first commit reports 'is not a
-    valid object'; one delayed retry must succeed. Any other failure, or a
-    second race failure, is NOT retried."""
+    """virtiofs-class cache race: the first commit fails with a race
+    signature; the single delayed retry must succeed and land the push."""
     import okf_kit.core.gitio as gitio
 
     hub, bundle = _hub_and_clone(tmp_path)
@@ -405,3 +404,34 @@ def test_commit_double_race_fails_after_single_retry(tmp_path: Path, monkeypatch
     assert sleeps["n"] == 1
     assert result["committed"] is False
     assert "is not a valid object" in result["detail"]
+
+
+def test_push_any_failure_gets_exactly_one_retry(tmp_path: Path, monkeypatch):
+    """Push gets the same single unconditional retry as commit: exactly two
+    push attempts, one sleep, pushed: False surfaces on permanent failure
+    while the local commit survives."""
+    import okf_kit.core.gitio as gitio
+
+    _, bundle = _hub_and_clone(tmp_path)
+    (bundle / "new.md").write_text("---\ntype: Table\n---\nbody\n", encoding="utf-8")
+    writer = GitWriter.discover(bundle)
+    assert writer is not None
+
+    real_git = writer._git
+    push_calls = {"n": 0}
+    sleeps = {"n": 0}
+
+    def failing_push(*args):
+        if args and args[0] == "push":
+            push_calls["n"] += 1
+            return gitio.GitResult(ok=False, detail="fatal: remote unreachable")
+        return real_git(*args)
+
+    monkeypatch.setattr(writer, "_git", failing_push)
+    monkeypatch.setattr(gitio.time, "sleep", lambda s: sleeps.__setitem__("n", sleeps["n"] + 1))
+    result = writer.commit_and_push([bundle / "new.md"], "msg")
+    assert push_calls["n"] == 2
+    assert sleeps["n"] == 1
+    assert result["committed"] is True
+    assert result["pushed"] is False
+    assert "remote unreachable" in result["detail"]
