@@ -333,7 +333,8 @@ def test_commit_retries_once_on_object_visibility_race(tmp_path: Path, monkeypat
             commit_calls["n"] += 1
             if commit_calls["n"] == 1:
                 return gitio.GitResult(
-                    ok=False, detail="fatal: deadbeef00 is not a valid object"
+                    ok=False,
+                    detail="fatal: loose object deadbeef00 (stored in .git/objects/de/adbeef00) is corrupt",
                 )
         return real_git(*args)
 
@@ -347,7 +348,10 @@ def test_commit_retries_once_on_object_visibility_race(tmp_path: Path, monkeypat
     assert "kb/new.md" in _hub_files(hub)
 
 
-def test_commit_does_not_retry_other_failures(tmp_path: Path, monkeypatch):
+def test_commit_any_failure_gets_exactly_one_retry(tmp_path: Path, monkeypatch):
+    """The retry is deliberately NOT signature-matched (the live race produced
+    two different error strings): any commit failure gets exactly one delayed
+    retry, then the failure surfaces."""
     import okf_kit.core.gitio as gitio
 
     _, bundle = _hub_and_clone(tmp_path)
@@ -357,6 +361,7 @@ def test_commit_does_not_retry_other_failures(tmp_path: Path, monkeypatch):
 
     real_git = writer._git
     commit_calls = {"n": 0}
+    sleeps = {"n": 0}
 
     def failing(*args):
         if args and args[0] == "commit":
@@ -365,11 +370,10 @@ def test_commit_does_not_retry_other_failures(tmp_path: Path, monkeypatch):
         return real_git(*args)
 
     monkeypatch.setattr(writer, "_git", failing)
-    monkeypatch.setattr(
-        gitio.time, "sleep", lambda s: (_ for _ in ()).throw(AssertionError("slept"))
-    )
+    monkeypatch.setattr(gitio.time, "sleep", lambda s: sleeps.__setitem__("n", sleeps["n"] + 1))
     result = writer.commit_and_push([bundle / "new.md"], "msg")
-    assert commit_calls["n"] == 1
+    assert commit_calls["n"] == 2
+    assert sleeps["n"] == 1
     assert result["committed"] is False
     assert "some unrelated failure" in result["detail"]
 
