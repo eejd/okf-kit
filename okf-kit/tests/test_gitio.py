@@ -7,6 +7,7 @@ remote exactly as production does.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -24,8 +25,11 @@ RICH_BODY = "# Overview\n\n" + ("word " * 130) + "\n\n# Examples\n\nexample\n"
 
 
 def _run(cwd: Path, *args: str) -> str:
+    # GIT_* scrubbed so fixture plumbing is immune to test-injected (or
+    # hook-inherited) GIT_DIR/GIT_INDEX_FILE redirection.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     proc = subprocess.run(
-        ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True
+        ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True, env=env
     )
     return proc.stdout.strip()
 
@@ -113,6 +117,42 @@ def test_path_outside_repo_is_rejected_structurally(tmp_path: Path):
     result = writer.commit_and_push([outside], "msg")
     assert result["committed"] is False
     assert "outside repository" in result["detail"]
+
+
+def test_all_outside_paths_reported_and_inside_path_not_committed(tmp_path: Path):
+    """Mixed batch with any out-of-bounds path: nothing commits, every bad
+    path is named (not just the first)."""
+    _, bundle = _hub_and_clone(tmp_path)
+    writer = GitWriter.discover(bundle)
+    assert writer is not None
+    bad1 = tmp_path / "bad1.md"
+    bad2 = tmp_path / "bad2.md"
+    bad1.write_text("x", encoding="utf-8")
+    bad2.write_text("x", encoding="utf-8")
+    inside = bundle / "good.md"
+    inside.write_text("---\ntype: Table\n---\nbody\n", encoding="utf-8")
+    result = writer.commit_and_push([bad1, inside, bad2], "msg")
+    assert result["committed"] is False
+    assert "bad1.md" in result["detail"] and "bad2.md" in result["detail"]
+    assert "good.md" not in _run(bundle.parent, "ls-tree", "-r", "--name-only", "HEAD")
+
+
+def test_git_dir_env_cannot_redirect_operations(tmp_path: Path, monkeypatch):
+    """Inherited GIT_DIR/GIT_INDEX_FILE (e.g. from a git hook that launched
+    the server) must not redirect commits away from the writer's repo."""
+    hub, bundle = _hub_and_clone(tmp_path)
+    decoy = tmp_path / "decoy.git"
+    decoy.mkdir()
+    _run(decoy, "init", "--bare", "-b", "main")
+    monkeypatch.setenv("GIT_DIR", str(decoy))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(tmp_path / "decoy-index"))
+    (bundle / "new.md").write_text("---\ntype: Table\n---\nbody\n", encoding="utf-8")
+    writer = GitWriter.discover(bundle)
+    assert writer is not None
+    assert writer.repo_root == bundle.parent
+    result = writer.commit_and_push([bundle / "new.md"], "msg")
+    assert result["committed"] is True and result["pushed"] is True
+    assert "kb/new.md" in _hub_files(hub)
 
 
 def test_push_rejected_when_hub_diverged_commit_survives(tmp_path: Path):

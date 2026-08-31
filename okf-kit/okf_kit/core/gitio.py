@@ -152,9 +152,12 @@ class GitWriter:
         if diff_quiet.ok:
             return {"committed": False, "pushed": False, "detail": "nothing to commit"}
 
-        # `--only` commits exactly the named paths via a temporary index, so
-        # pre-existing staged changes from outside this call are never swept
-        # into an okf-mcp commit (and remain staged afterwards, untouched).
+        # `--only` takes the named paths from the WORKING TREE into a
+        # temporary index at commit time, so pre-existing staged changes from
+        # outside this call are never swept into an okf-mcp commit (and remain
+        # staged afterwards, untouched). The working-tree re-read is safe here:
+        # the file was written synchronously by this same call, with no
+        # intervening I/O.
         committed = self._git("commit", "--only", "-m", message, "--", *rels)
         if not committed.ok:
             return {
