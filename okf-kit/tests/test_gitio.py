@@ -372,3 +372,32 @@ def test_commit_does_not_retry_other_failures(tmp_path: Path, monkeypatch):
     assert commit_calls["n"] == 1
     assert result["committed"] is False
     assert "some unrelated failure" in result["detail"]
+
+
+def test_commit_double_race_fails_after_single_retry(tmp_path: Path, monkeypatch):
+    """If the retry itself hits the race marker again, there is no second
+    retry: exactly two attempts, one sleep, committed: False."""
+    import okf_kit.core.gitio as gitio
+
+    _, bundle = _hub_and_clone(tmp_path)
+    (bundle / "new.md").write_text("---\ntype: Table\n---\nbody\n", encoding="utf-8")
+    writer = GitWriter.discover(bundle)
+    assert writer is not None
+
+    real_git = writer._git
+    commit_calls = {"n": 0}
+    sleeps = {"n": 0}
+
+    def always_racing(*args):
+        if args and args[0] == "commit":
+            commit_calls["n"] += 1
+            return gitio.GitResult(ok=False, detail="fatal: cafebabe is not a valid object")
+        return real_git(*args)
+
+    monkeypatch.setattr(writer, "_git", always_racing)
+    monkeypatch.setattr(gitio.time, "sleep", lambda s: sleeps.__setitem__("n", sleeps["n"] + 1))
+    result = writer.commit_and_push([bundle / "new.md"], "msg")
+    assert commit_calls["n"] == 2
+    assert sleeps["n"] == 1
+    assert result["committed"] is False
+    assert "is not a valid object" in result["detail"]
