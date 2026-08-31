@@ -31,9 +31,14 @@ from pathlib import Path
 from typing import Any
 
 _GIT_TIMEOUT_S = 30
-# Failure signature + retry window for filesystem-cache object-visibility
-# races (virtiofs and kin) — see commit_and_push.
-_OBJECT_RACE_MARKER = "is not a valid object"
+# Retry window for filesystem-cache object-visibility races (virtiofs and
+# kin) — see commit_and_push. Live deployment produced TWO distinct error
+# signatures for the same race ("<sha> is not a valid object" and "loose
+# object <sha> ... is corrupt" — the object was valid and readable moments
+# later in both cases), so the retry is deliberately NOT signature-matched:
+# commit and push each get one unconditional delayed retry on failure. A
+# genuine failure simply fails identically twice, costing one 2s sleep; a
+# cache race succeeds on the second attempt.
 _OBJECT_RACE_RETRY_DELAY_S = 2.0
 _DEFAULT_AUTHOR_NAME = "okf-mcp"
 _DEFAULT_AUTHOR_EMAIL = "okf-mcp@hive.local"
@@ -163,17 +168,7 @@ class GitWriter:
         # staged afterwards, untouched). The working-tree re-read is safe here:
         # the file was written synchronously by this same call, with no
         # intervening I/O.
-        committed = self._git("commit", "--only", "-m", message, "--", *rels)
-        if not committed.ok and _OBJECT_RACE_MARKER in committed.detail:
-            # Networked/para-virtualized filesystems (observed live: virtiofs
-            # under Colima) cache negative directory lookups: an object file
-            # written moments ago by `git add` (or by commit's own write-tree)
-            # can be invisible to the very next lookup until the attribute
-            # cache expires (~1s). Every first in-container commit hit this.
-            # One bounded retry after the cache window is the fix — never a
-            # loop, and only for this exact failure signature.
-            time.sleep(_OBJECT_RACE_RETRY_DELAY_S)
-            committed = self._git("commit", "--only", "-m", message, "--", *rels)
+        committed = self._retry_once("commit", "--only", "-m", message, "--", *rels)
         if not committed.ok:
             return {
                 "committed": False,
@@ -188,12 +183,22 @@ class GitWriter:
         }
         if not self.push:
             return result
-        pushed = self._git("push", self.remote, "HEAD")
+        pushed = self._retry_once("push", self.remote, "HEAD")
         if pushed.ok:
             result["pushed"] = True
         else:
             result["detail"] = f"git push: {pushed.detail}"
         return result
+
+    def _retry_once(self, *args: str) -> GitResult:
+        """Run a git command; on failure, one delayed retry (see the
+        _OBJECT_RACE_RETRY_DELAY_S rationale — cache races have produced
+        multiple error signatures, so no signature matching)."""
+        result = self._git(*args)
+        if result.ok:
+            return result
+        time.sleep(_OBJECT_RACE_RETRY_DELAY_S)
+        return self._git(*args)
 
     def status(self) -> dict[str, Any]:
         """Repository state for the staleness/provenance signal: sha, branch, dirty.
