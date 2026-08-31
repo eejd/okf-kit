@@ -23,6 +23,7 @@ Design rules, in order of importance:
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,6 +76,11 @@ class GitWriter:
             f"user.email={self.author_email}",
             *args,
         ]
+        # Strip inherited GIT_* variables: if the serving process was itself
+        # started from a git hook or similar context (GIT_DIR/GIT_INDEX_FILE
+        # exported), an unscrubbed child git would silently target the
+        # caller's repository instead of repo_root.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         try:
             proc = subprocess.run(
                 cmd,
@@ -82,6 +88,7 @@ class GitWriter:
                 text=True,
                 timeout=_GIT_TIMEOUT_S,
                 check=False,
+                env=env,
             )
         except FileNotFoundError:
             return GitResult(ok=False, detail="git executable not found")
@@ -122,24 +129,33 @@ class GitWriter:
         ``"nothing to commit"``; that is a no-op, not a failure.
         """
         rels: list[str] = []
+        outside: list[str] = []
         for path in paths:
             try:
                 rels.append(str(Path(path).resolve().relative_to(self.repo_root.resolve())))
             except ValueError:
-                return {
-                    "committed": False,
-                    "pushed": False,
-                    "detail": f"path {path} is outside repository {self.repo_root}",
-                }
+                outside.append(str(path))
+        if outside:
+            return {
+                "committed": False,
+                "pushed": False,
+                "detail": f"path(s) outside repository {self.repo_root}: {', '.join(outside)}",
+            }
         added = self._git("add", "--", *rels)
         if not added.ok:
             return {"committed": False, "pushed": False, "detail": f"git add: {added.detail}"}
 
-        staged = self._git("diff", "--cached", "--quiet")
-        if staged.ok:  # exit 0 == no staged changes
+        # Scoped to OUR paths: exit 0 == none of them differ from HEAD. An
+        # unscoped check would see unrelated staged changes (e.g. an
+        # operator's manual `git add`) as "something to commit".
+        diff_quiet = self._git("diff", "--cached", "--quiet", "--", *rels)
+        if diff_quiet.ok:
             return {"committed": False, "pushed": False, "detail": "nothing to commit"}
 
-        committed = self._git("commit", "-m", message)
+        # `--only` commits exactly the named paths via a temporary index, so
+        # pre-existing staged changes from outside this call are never swept
+        # into an okf-mcp commit (and remain staged afterwards, untouched).
+        committed = self._git("commit", "--only", "-m", message, "--", *rels)
         if not committed.ok:
             return {
                 "committed": False,
@@ -162,13 +178,20 @@ class GitWriter:
         return result
 
     def status(self) -> dict[str, Any]:
-        """Repository state for the staleness/provenance signal: sha, branch, dirty."""
+        """Repository state for the staleness/provenance signal: sha, branch, dirty.
+
+        ``branch`` is ``None`` with ``detached: true`` on a detached-HEAD
+        checkout (``symbolic-ref`` fails there, unlike ``rev-parse
+        --abbrev-ref`` whose literal ``"HEAD"`` answer is indistinguishable
+        from a branch actually named HEAD).
+        """
         sha = self._git("rev-parse", "HEAD")
-        branch = self._git("rev-parse", "--abbrev-ref", "HEAD")
+        branch = self._git("symbolic-ref", "--short", "HEAD")
         porcelain = self._git("status", "--porcelain")
         return {
             "repo": str(self.repo_root),
             "sha": sha.stdout if sha.ok else None,
             "branch": branch.stdout if branch.ok else None,
+            "detached": (not branch.ok) if sha.ok else None,
             "dirty": bool(porcelain.stdout) if porcelain.ok else None,
         }

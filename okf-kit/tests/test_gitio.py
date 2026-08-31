@@ -115,12 +115,74 @@ def test_path_outside_repo_is_rejected_structurally(tmp_path: Path):
     assert "outside repository" in result["detail"]
 
 
+def test_push_rejected_when_hub_diverged_commit_survives(tmp_path: Path):
+    """Hub moved on independently → push is rejected non-fast-forward; the
+    local commit survives and is reported committed but not pushed."""
+    hub, bundle = _hub_and_clone(tmp_path)
+    other = tmp_path / "other"
+    subprocess.run(
+        ["git", "clone", str(hub), str(other)], capture_output=True, text=True, check=True
+    )
+    (other / "kb" / "hub-side.md").write_text("---\ntype: Table\n---\nx\n", encoding="utf-8")
+    _run(other, "-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
+    _run(other, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "hub side")
+    _run(other, "push", "origin", "HEAD")
+
+    (bundle / "new.md").write_text("---\ntype: Table\n---\nbody\n", encoding="utf-8")
+    writer = GitWriter.discover(bundle)
+    assert writer is not None
+    result = writer.commit_and_push([bundle / "new.md"], "msg")
+    assert result["committed"] is True
+    assert result["pushed"] is False
+    assert "git push" in result["detail"]
+    assert "kb/new.md" in _run(bundle.parent, "ls-tree", "-r", "--name-only", "HEAD")
+
+
+def test_unrelated_staged_changes_are_not_swept_into_commit(tmp_path: Path):
+    """An operator's manual `git add` must never leak into an okf-mcp commit."""
+    hub, bundle = _hub_and_clone(tmp_path)
+    clone = bundle.parent
+    (clone / "operator.md").write_text("operator WIP\n", encoding="utf-8")
+    _run(clone, "add", "operator.md")
+
+    (bundle / "new.md").write_text("---\ntype: Table\n---\nbody\n", encoding="utf-8")
+    writer = GitWriter.discover(bundle)
+    assert writer is not None
+    result = writer.commit_and_push([bundle / "new.md"], "okf-mcp: create concept new")
+    assert result["committed"] is True
+    committed_files = _run(clone, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")
+    assert committed_files.splitlines() == ["kb/new.md"]
+    # The operator's staged file is still staged, untouched.
+    assert "operator.md" in _run(clone, "diff", "--cached", "--name-only")
+
+
+def test_commit_message_format(tmp_path: Path):
+    hub, bundle = _hub_and_clone(tmp_path)
+    (bundle / "new.md").write_text("---\ntype: Table\n---\nbody\n", encoding="utf-8")
+    writer = GitWriter.discover(bundle)
+    assert writer is not None
+    writer.commit_and_push([bundle / "new.md"], "okf-mcp: create concept new")
+    assert _run(hub, "log", "--format=%s", "-1", "main") == "okf-mcp: create concept new"
+
+
+def test_status_detached_head_reports_detached_not_branch(tmp_path: Path):
+    _, bundle = _hub_and_clone(tmp_path)
+    _run(bundle.parent, "checkout", "--detach")
+    writer = GitWriter.discover(bundle)
+    assert writer is not None
+    status = writer.status()
+    assert status["branch"] is None
+    assert status["detached"] is True
+    assert status["sha"]
+
+
 def test_status_reports_sha_branch_dirty(tmp_path: Path):
     _, bundle = _hub_and_clone(tmp_path)
     writer = GitWriter.discover(bundle)
     assert writer is not None
     status = writer.status()
     assert status["branch"] == "main"
+    assert status["detached"] is False
     assert status["sha"]
     assert status["dirty"] is False
     (bundle / "dirty.md").write_text("x", encoding="utf-8")

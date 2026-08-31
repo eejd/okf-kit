@@ -91,7 +91,8 @@ repository. Under `--git-commit`, `create_concept` also stamps `status: draft` a
 `generated: process:okf-mcp` trust fields (OKF v0.2 §5) so MCP-authored concepts are
 reviewable post hoc.
 
-- **MCP:** `sync_status(bundle) -> {bundle, path, git_commit, tracked, repo?, sha?, branch?, dirty?}`
+- **MCP:** `sync_status(bundle) -> {bundle, path, git_commit, tracked, repo?, sha?, branch?, detached?, dirty?}`
+  (`branch` is null with `detached: true` on a detached-HEAD checkout)
 
 <!-- desc:start -->
 Report a bundle's git provenance for staleness checks: the containing repository's HEAD sha, branch, and whether the working tree is dirty, plus whether this server auto-commits writes (git_commit). Returns tracked=false when the bundle is not inside a git repository. Use it to cite the exact served revision or to detect a serving checkout that has drifted from its source. Example: sync_status(bundle='analytics').
