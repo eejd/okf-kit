@@ -8,6 +8,13 @@
 # arm64 + amd64: ghcr.io/astral-sh/uv is a multi-platform manifest.
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
+# git is required for the --git-commit write backend (commit+push into the
+# serving checkout; the remote is a same-host file-path bare repo — no
+# network credentials exist in this image).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy dependency manifest + lockfile first (cache-efficient layer ordering).

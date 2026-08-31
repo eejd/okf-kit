@@ -133,6 +133,7 @@ def test_make_server_registers_all_tools(tmp_path: Path):
     names = {t.name for t in tools}
     assert {
         "search", "read_concept", "validate", "create_concept", "init_bundle", "list_bundles",
+        "sync_status",
     } <= names
     for tool in tools:
         assert tool.description and len(tool.description) > 30  # agent-triggerable

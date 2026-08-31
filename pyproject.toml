@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "okf-kit"
-version = "0.1.0"
+version = "0.2.0"
 description = "Open Knowledge Format (OKF v0.1): core library, CLI, and MCP server."
 readme = "README.md"
 requires-python = ">=3.12"
