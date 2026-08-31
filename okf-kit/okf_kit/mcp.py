@@ -49,6 +49,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from okf_kit.core import context as context_mod
+from okf_kit.core.gitio import GitWriter
 from okf_kit.core.links import iter_concept_files
 from okf_kit.core.parse import parse_concept
 from okf_kit.core.search import Hit, build_index, search
@@ -104,6 +105,14 @@ _LIST_BUNDLES_DESC = (
     "requires. Call this first if you don't already know the registered name — it is not "
     "always the same as the corpus's conceptual name (e.g. a server may register a bundle as "
     "'bundle' if that is its mount directory's basename). Example: list_bundles()."
+)
+
+_SYNC_STATUS_DESC = (
+    "Report a bundle's git provenance for staleness checks: the containing repository's "
+    "HEAD sha, branch, and whether the working tree is dirty, plus whether this server "
+    "auto-commits writes (git_commit). Returns tracked=false when the bundle is not inside "
+    "a git repository. Use it to cite the exact served revision or to detect a serving "
+    "checkout that has drifted from its source. Example: sync_status(bundle='analytics')."
 )
 
 BundleName = Annotated[
@@ -304,6 +313,25 @@ class BundleRegistry:
         return sorted(self._bundles)
 
 
+class GitBackend:
+    """Per-bundle :class:`GitWriter` cache for the ``--git-commit`` write path.
+
+    Discovery (``git rev-parse --show-toplevel`` from the bundle root) runs
+    once per bundle, lazily, so a server whose bundles live outside any git
+    repository still starts and serves reads normally — the git result on a
+    write then reports the discovery failure instead of raising.
+    """
+
+    def __init__(self, reg: BundleRegistry) -> None:
+        self._reg = reg
+        self._writers: dict[str, GitWriter | None] = {}
+
+    def writer_for(self, bundle: str) -> GitWriter | None:
+        if bundle not in self._writers:
+            self._writers[bundle] = GitWriter.discover(self._reg.get(bundle))
+        return self._writers[bundle]
+
+
 def tool_search(
     reg: BundleRegistry,
     bundle: BundleName,
@@ -396,6 +424,28 @@ def _check_richness(body: str) -> None:
         raise ValueError("concept body is too thin: " + "; ".join(problems))
 
 
+def _git_commit_result(
+    git: GitBackend | None, bundle: str, paths: list[Path], message: str
+) -> dict[str, Any] | None:
+    """Commit-and-push for a completed write, or ``None`` when git mode is off.
+
+    Never raises: a bundle outside any git repository degrades to a
+    structured ``{committed: false, detail: ...}`` result — the file write
+    that preceded this call has already succeeded and must never be undone
+    or reported as failed because of a git problem.
+    """
+    if git is None:
+        return None
+    writer = git.writer_for(bundle)
+    if writer is None:
+        return {
+            "committed": False,
+            "pushed": False,
+            "detail": "bundle is not inside a git repository (or git is unavailable)",
+        }
+    return writer.commit_and_push(paths, message)
+
+
 def tool_create_concept(
     reg: BundleRegistry,
     bundle: BundleName,
@@ -408,15 +458,23 @@ def tool_create_concept(
     resource: ConceptResource = None,
     timestamp: Timestamp = None,
     extra: ExtraFrontmatter = None,
+    git: GitBackend | None = None,
 ) -> dict[str, Any]:
     """Create a concept via MCP, enforcing the richness floor.
 
     Forwards all recommended frontmatter (title/description/tags/resource/timestamp)
     plus arbitrary extension keys (``extra``) to ``core.templates.create_concept``.
     An explicit ``resource``/``timestamp`` arg overrides a same-named ``extra`` key.
+
+    Under git mode (``--git-commit``) the concept additionally receives the OKF
+    v0.2 trust fields ``status: draft`` and ``generated: {by: process:okf-mcp}``
+    (caller-supplied values win — ``setdefault`` semantics), and the written
+    file is committed and pushed; the git outcome is reported in the result's
+    ``git`` key and never fails the create.
     """
     started_at = time.monotonic()
     ok = False
+    git_outcome: dict[str, Any] | None = None
     try:
         _check_richness(body)
         extra_fm: dict[str, Any] = dict(extra) if extra else {}
@@ -424,6 +482,14 @@ def tool_create_concept(
             extra_fm["resource"] = resource
         if timestamp is not None:
             extra_fm["timestamp"] = timestamp
+        if git is not None:
+            # Provenance for the post-hoc review workflow: MCP-authored
+            # concepts stay draft until a human flips status + adds verified.
+            extra_fm.setdefault("status", "draft")
+            extra_fm.setdefault(
+                "generated",
+                {"by": "process:okf-mcp", "at": datetime.now(UTC).isoformat()},
+            )
         path = create_concept(
             reg.get(bundle),
             cid,
@@ -435,23 +501,75 @@ def tool_create_concept(
             extra=extra_fm or None,
         )
         ok = True
-        return {"created": True, "cid": cid, "path": str(path)}
+        result: dict[str, Any] = {"created": True, "cid": cid, "path": str(path)}
+        git_outcome = _git_commit_result(git, bundle, [path], f"okf-mcp: create concept {cid}")
+        if git_outcome is not None:
+            result["git"] = git_outcome
+        return result
     finally:
-        _log_tool_call("create_concept", started_at, ok, bundle=bundle, cid=cid, type=type)
+        _log_tool_call(
+            "create_concept",
+            started_at,
+            ok,
+            bundle=bundle,
+            cid=cid,
+            type=type,
+            committed=git_outcome.get("committed") if git_outcome else None,
+            pushed=git_outcome.get("pushed") if git_outcome else None,
+        )
 
 
 def tool_init_bundle(
-    reg: BundleRegistry, bundle: BundleName, okf_version: OkfVersion = "0.2"
+    reg: BundleRegistry,
+    bundle: BundleName,
+    okf_version: OkfVersion = "0.2",
+    git: GitBackend | None = None,
 ) -> dict[str, Any]:
     """Initialize a bundle root via MCP (idempotent)."""
     started_at = time.monotonic()
     ok = False
+    git_outcome: dict[str, Any] | None = None
     try:
         path = init_bundle(reg.get(bundle), okf_version=okf_version)
         ok = True
-        return {"initialized": True, "path": str(path)}
+        result: dict[str, Any] = {"initialized": True, "path": str(path)}
+        git_outcome = _git_commit_result(git, bundle, [path], f"okf-mcp: init bundle {bundle}")
+        if git_outcome is not None:
+            result["git"] = git_outcome
+        return result
     finally:
-        _log_tool_call("init_bundle", started_at, ok, bundle=bundle, okf_version=okf_version)
+        _log_tool_call(
+            "init_bundle",
+            started_at,
+            ok,
+            bundle=bundle,
+            okf_version=okf_version,
+            committed=git_outcome.get("committed") if git_outcome else None,
+            pushed=git_outcome.get("pushed") if git_outcome else None,
+        )
+
+
+def tool_sync_status(
+    reg: BundleRegistry, git: GitBackend, bundle: BundleName, *, git_commit: bool
+) -> dict[str, Any]:
+    """Report a bundle's git provenance (sha/branch/dirty) for staleness checks."""
+    started_at = time.monotonic()
+    ok = False
+    try:
+        path = reg.get(bundle)
+        writer = git.writer_for(bundle)
+        result: dict[str, Any] = {
+            "bundle": bundle,
+            "path": str(path),
+            "git_commit": git_commit,
+            "tracked": writer is not None,
+        }
+        if writer is not None:
+            result.update(writer.status())
+        ok = True
+        return result
+    finally:
+        _log_tool_call("sync_status", started_at, ok, bundle=bundle)
 
 
 def tool_list_bundles(reg: BundleRegistry) -> list[dict[str, Any]]:
@@ -472,6 +590,7 @@ def make_server(
     *,
     host: str = "127.0.0.1",
     port: int = 4020,
+    git_commit: bool = False,
 ) -> FastMCP:
     """Build a FastMCP server with tools + per-concept ``okf://`` resources.
 
@@ -485,8 +604,15 @@ def make_server(
         port: TCP port for HTTP/SSE transports (default ``4020``, the hive OKF port band).
               Ignored in stdio mode but always forwarded to the constructor so a single
               ``make_server()`` call covers all transport choices.
+        git_commit: When true (``--git-commit``), successful writes are
+              committed into the git repository containing the bundle and
+              pushed to its default remote, and MCP-created concepts carry
+              ``status: draft`` + ``generated: process:okf-mcp`` trust fields.
+              Git failures degrade to structured warnings, never lost writes.
     """
     reg = BundleRegistry(bundles)
+    git = GitBackend(reg)
+    write_git = git if git_commit else None
     server = FastMCP("okf", host=host, port=port, streamable_http_path="/mcp")
 
     @server.tool(
@@ -551,7 +677,18 @@ def make_server(
         extra: ExtraFrontmatter = None,
     ) -> dict[str, Any]:
         return tool_create_concept(
-            reg, bundle, cid, type, title, description, body, tags, resource, timestamp, extra
+            reg,
+            bundle,
+            cid,
+            type,
+            title,
+            description,
+            body,
+            tags,
+            resource,
+            timestamp,
+            extra,
+            git=write_git,
         )
 
     @server.tool(
@@ -566,7 +703,7 @@ def make_server(
         ),
     )
     def _init_bundle(bundle: BundleName, okf_version: OkfVersion = "0.2") -> dict[str, Any]:
-        return tool_init_bundle(reg, bundle, okf_version)
+        return tool_init_bundle(reg, bundle, okf_version, git=write_git)
 
     @server.tool(
         name="list_bundles",
@@ -576,6 +713,15 @@ def make_server(
     )
     def _list_bundles() -> list[dict[str, Any]]:
         return tool_list_bundles(reg)
+
+    @server.tool(
+        name="sync_status",
+        title="Bundle git provenance",
+        description=_SYNC_STATUS_DESC,
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+    )
+    def _sync_status(bundle: BundleName) -> dict[str, Any]:
+        return tool_sync_status(reg, git, bundle, git_commit=git_commit)
 
     _register_resources(server, reg)
     return server
@@ -681,10 +827,21 @@ def main(argv: list[str] | None = None) -> int:
         default=4020,
         help="Port for HTTP/SSE transports (default 4020 — hive OKF port band).",
     )
+    parser.add_argument(
+        "--git-commit",
+        action="store_true",
+        help=(
+            "Commit and push each successful write (create_concept, init_bundle) into the "
+            "git repository containing the bundle; MCP-created concepts get status: draft + "
+            "generated: process:okf-mcp trust fields. Git failures degrade to warnings in "
+            "the tool result — the file write itself is never rolled back."
+        ),
+    )
     args = parser.parse_args(argv)
     transport: str = _TRANSPORT_ALIASES.get(args.transport, args.transport)
     bundles = [_parse_bundle_arg(b) for b in args.bundles]
-    make_server(bundles, host=args.host, port=args.port).run(transport=transport)  # type: ignore[arg-type]
+    server = make_server(bundles, host=args.host, port=args.port, git_commit=args.git_commit)
+    server.run(transport=transport)  # type: ignore[arg-type]
     return 0
 
 

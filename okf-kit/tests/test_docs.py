@@ -16,6 +16,7 @@ from okf_kit.mcp import (
     _LIST_BUNDLES_DESC,
     _READ_DESC,
     _SEARCH_DESC,
+    _SYNC_STATUS_DESC,
     _VALIDATE_DESC,
 )
 
@@ -49,6 +50,7 @@ def test_tool_reference_synced_with_mcp_descriptions():
     assert _extract_description(md, "create_concept") == _CREATE_DESC
     assert _extract_description(md, "init_bundle") == _INIT_DESC
     assert _extract_description(md, "list_bundles") == _LIST_BUNDLES_DESC
+    assert _extract_description(md, "sync_status") == _SYNC_STATUS_DESC
 
 
 def test_agent_installer_docs_are_skill_only():

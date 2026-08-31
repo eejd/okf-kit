@@ -9,7 +9,7 @@ description: Canonical reference for the okf CLI and okf-mcp server — each too
 
 Canonical reference for the `okf` CLI and the `okf-mcp` server. Each tool's **canonical description** — the agent trigger surface — lives in a `<!-- desc:start -->` … `<!-- desc:end -->` block below; the test suite asserts these match the strings embedded in [okf-mcp](/interfaces/okf-mcp.md), so this page and the server never drift (see [Tool doc sync](/conventions/tool-doc-sync.md)).
 
-Most commands operate on a *bundle* — a directory of OKF `.md` concept files. The six MCP tools are `search`, `read_concept` (with `depth` for [progressive context](/architecture/progressive-context.md)), `validate`, `create_concept`, `init_bundle`, and `list_bundles`; the `okf` CLI mirrors the first five plus `index regen`, `code index`, and `serve`. The CLI also has a skill-only `agent install` command for installing OKF skills into Claude Code or Codex.
+Most commands operate on a *bundle* — a directory of OKF `.md` concept files. The seven MCP tools are `search`, `read_concept` (with `depth` for [progressive context](/architecture/progressive-context.md)), `validate`, `create_concept`, `init_bundle`, `list_bundles`, and `sync_status`; the `okf` CLI mirrors the first five plus `index regen`, `code index`, and `serve`. The CLI also has a skill-only `agent install` command for installing OKF skills into Claude Code or Codex.
 
 ## search
 
@@ -78,6 +78,24 @@ expect.
 
 <!-- desc:start -->
 List every bundle name registered on this server, alphabetically sorted (not registration order), the only valid values for the 'bundle' argument every other tool requires. Call this first if you don't already know the registered name — it is not always the same as the corpus's conceptual name (e.g. a server may register a bundle as 'bundle' if that is its mount directory's basename). Example: list_bundles().
+<!-- desc:end -->
+
+## sync_status
+
+Git provenance for a served bundle. Reports the containing repository's `HEAD` sha, current
+branch, and dirty state, plus whether this server was started with `--git-commit` (writes
+auto-commit + push) — `tracked: false` when the bundle directory is not inside a git work
+tree. This is the staleness signal for deployments that serve a git checkout: a client (or a
+freshness gate) can cite the exact served revision and detect drift from the source
+repository. Under `--git-commit`, `create_concept` also stamps `status: draft` and
+`generated: process:okf-mcp` trust fields (OKF v0.2 §5) so MCP-authored concepts are
+reviewable post hoc.
+
+- **MCP:** `sync_status(bundle) -> {bundle, path, git_commit, tracked, repo?, sha?, branch?, detached?, dirty?}`
+  (`branch` is null with `detached: true` on a detached-HEAD checkout)
+
+<!-- desc:start -->
+Report a bundle's git provenance for staleness checks: the containing repository's HEAD sha, branch, and whether the working tree is dirty, plus whether this server auto-commits writes (git_commit). Returns tracked=false when the bundle is not inside a git repository. Use it to cite the exact served revision or to detect a serving checkout that has drifted from its source. Example: sync_status(bundle='analytics').
 <!-- desc:end -->
 
 ## Build commands (CLI only)
