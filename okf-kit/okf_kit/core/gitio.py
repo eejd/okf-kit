@@ -25,11 +25,16 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 _GIT_TIMEOUT_S = 30
+# Failure signature + retry window for filesystem-cache object-visibility
+# races (virtiofs and kin) — see commit_and_push.
+_OBJECT_RACE_MARKER = "is not a valid object"
+_OBJECT_RACE_RETRY_DELAY_S = 2.0
 _DEFAULT_AUTHOR_NAME = "okf-mcp"
 _DEFAULT_AUTHOR_EMAIL = "okf-mcp@hive.local"
 
@@ -159,6 +164,16 @@ class GitWriter:
         # the file was written synchronously by this same call, with no
         # intervening I/O.
         committed = self._git("commit", "--only", "-m", message, "--", *rels)
+        if not committed.ok and _OBJECT_RACE_MARKER in committed.detail:
+            # Networked/para-virtualized filesystems (observed live: virtiofs
+            # under Colima) cache negative directory lookups: an object file
+            # written moments ago by `git add` (or by commit's own write-tree)
+            # can be invisible to the very next lookup until the attribute
+            # cache expires (~1s). Every first in-container commit hit this.
+            # One bounded retry after the cache window is the fix — never a
+            # loop, and only for this exact failure signature.
+            time.sleep(_OBJECT_RACE_RETRY_DELAY_S)
+            committed = self._git("commit", "--only", "-m", message, "--", *rels)
         if not committed.ok:
             return {
                 "committed": False,
