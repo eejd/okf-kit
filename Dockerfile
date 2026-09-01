@@ -8,11 +8,14 @@
 # arm64 + amd64: ghcr.io/astral-sh/uv is a multi-platform manifest.
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
-# git is required for the --git-commit write backend (commit+push into the
-# serving checkout; the remote is a same-host file-path bare repo — no
-# network credentials exist in this image).
+# git is required for the --git-commit write backend; openssh-client lets the
+# serving checkout reach its hub over an ssh:// remote (deploy key mounted
+# read-only at runtime, forced-command-limited host-side to the hub's pack
+# commands — nothing credential-like is baked into this image). ssh transport
+# is required because a file-path remote makes the CONTAINER write hub objects
+# over virtiofs, whose fresh-object read-back is unreliable (#9/#10 history).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
+    && apt-get install -y --no-install-recommends git openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
