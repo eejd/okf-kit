@@ -14,7 +14,7 @@ from typing import Any
 from okf_kit.core import context as context_mod
 from okf_kit.core.context import ConceptNotFound
 from okf_kit.core.index import regenerate_indexes
-from okf_kit.core.search import build_index, search
+from okf_kit.core.search import build_index, search_page
 from okf_kit.core.templates import TEMPLATE_TYPES, create_concept, init_bundle
 from okf_kit.core.validate import Report, validate_bundle
 
@@ -66,6 +66,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_val = sub.add_parser("validate", help="Validate OKF v0.2 conformance (SPEC §11).")
     p_val.add_argument("bundle")
     p_val.add_argument("--json", action="store_true", help="Emit a JSON report.")
+    p_val.add_argument(
+        "--profile",
+        choices=("hive",),
+        help="Apply a publication profile separately from OKF conformance.",
+    )
 
     p_search = sub.add_parser("search", help="Full-text search across the bundle.")
     p_search.add_argument("bundle")
@@ -73,6 +78,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_search.add_argument("--type", action="append", default=[])
     p_search.add_argument("--tag", action="append", default=[])
     p_search.add_argument("--limit", type=int, default=20)
+    p_search.add_argument("--cursor")
+    p_search.add_argument(
+        "--metadata", action="append", default=[], metavar="KEY=JSON",
+        help="Exact frontmatter filter; repeat for multiple facets.",
+    )
     p_search.add_argument("--json", action="store_true")
 
     p_read = sub.add_parser(
@@ -82,6 +92,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_read.add_argument("concept_id")
     p_read.add_argument("--depth", type=int, default=0)
     p_read.add_argument("--token-budget", type=int, default=8000)
+    p_read.add_argument("--direction", choices=("outgoing", "incoming", "both"), default="both")
 
     p_index = sub.add_parser("index", help="index.md management.")
     idx_sub = p_index.add_subparsers(dest="index_command", required=True)
@@ -225,25 +236,34 @@ def _cmd_new(args: argparse.Namespace) -> int:
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
-    report = validate_bundle(Path(args.bundle))
+    report = validate_bundle(Path(args.bundle), profile=args.profile)
     if args.json:
         print(json.dumps(report.to_dict(), indent=2, default=str))
     else:
         _print_report(report)
-    return 0 if report.conformant else 1
+    return 0 if (report.publishable if args.profile else report.conformant) else 1
 
 
 def _cmd_search(args: argparse.Namespace) -> int:
     index = build_index(Path(args.bundle))
-    hits = search(
+    metadata = _parse_metadata_filters(args.metadata)
+    hits, total, next_cursor = search_page(
         index,
         args.query,
         type=args.type or None,
         tag=args.tag or None,
+        metadata=metadata or None,
         limit=args.limit,
+        cursor=args.cursor,
     )
     if args.json:
-        print(json.dumps([_hit_dict(h) for h in hits], indent=2))
+        print(
+            json.dumps(
+                {"results": [_hit_dict(h) for h in hits], "total": total,
+                 "next_cursor": next_cursor},
+                indent=2,
+            )
+        )
     else:
         _print_hits(hits)
     return 0
@@ -255,9 +275,23 @@ def _cmd_read(args: argparse.Namespace) -> int:
         args.concept_id,
         depth=args.depth,
         token_budget=args.token_budget,
+        direction=args.direction,
     )
     print(text)
     return 0
+
+
+def _parse_metadata_filters(raw_filters: list[str]) -> dict[str, Any]:
+    parsed: dict[str, Any] = {}
+    for raw in raw_filters:
+        key, sep, raw_value = raw.partition("=")
+        if not sep or not key:
+            raise ValueError(f"invalid metadata filter {raw!r}; expected KEY=JSON")
+        try:
+            parsed[key] = json.loads(raw_value)
+        except json.JSONDecodeError:
+            parsed[key] = raw_value
+    return parsed
 
 
 def _cmd_index_regen(args: argparse.Namespace) -> int:
@@ -323,11 +357,16 @@ def _cmd_agent_install(args: argparse.Namespace) -> int:
 
 def _print_report(report: Report) -> None:
     status = "conformant" if report.conformant else "NOT conformant"
+    publication = ""
+    if report.profile:
+        publication = f", {'publishable' if report.publishable else 'NOT publishable'}"
     print(
-        f"{status}: {len(report.errors)} error(s), "
+        f"{status}{publication}: {len(report.errors)} error(s), "
+        f"{len(report.publication_errors)} publication error(s), "
         f"{len(report.warnings)} warning(s), {len(report.info)} info"
     )
-    for finding in report.errors + report.warnings + report.info:
+    findings = report.errors + report.publication_errors + report.warnings + report.info
+    for finding in findings:
         loc = finding.cid or (finding.path.name if finding.path else "")
         suffix = f" ({loc})" if loc else ""
         print(f"  [{finding.severity}] {finding.code}: {finding.message}{suffix}")

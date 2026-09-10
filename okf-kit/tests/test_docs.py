@@ -12,6 +12,7 @@ from pathlib import Path
 
 from okf_kit.mcp import (
     _CREATE_DESC,
+    _GRAPH_DESC,
     _INIT_DESC,
     _LIST_BUNDLES_DESC,
     _READ_DESC,
@@ -48,6 +49,7 @@ def test_tool_reference_synced_with_mcp_descriptions():
     assert _extract_description(md, "read_concept") == _READ_DESC
     assert _extract_description(md, "validate") == _VALIDATE_DESC
     assert _extract_description(md, "create_concept") == _CREATE_DESC
+    assert _extract_description(md, "graph_links") == _GRAPH_DESC
     assert _extract_description(md, "init_bundle") == _INIT_DESC
     assert _extract_description(md, "list_bundles") == _LIST_BUNDLES_DESC
     assert _extract_description(md, "sync_status") == _SYNC_STATUS_DESC

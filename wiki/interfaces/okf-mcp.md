@@ -1,19 +1,20 @@
 ---
 type: Interface
 title: okf-mcp server
-description: The `okf-mcp` MCP server — five tools (search/read_concept/validate/create_concept/init_bundle),
-  per-concept okf:// resources, and the create_concept richness floor.
+description: The `okf-mcp` MCP server — reviewed stable and writable preview lanes,
+  progressive graph traversal, and per-concept okf:// resources.
 ---
 # Overview
 
-`okf-mcp` (`okf_kit/mcp.py`, FastMCP over stdio) exposes an OKF bundle to any MCP client — Claude Code, Antigravity, etc. — as **five tools** plus one `okf://<bundle>/concepts/<cid>.md` resource per concept. The bundle is registered at startup by directory name (e.g. `okf-mcp ./wiki` registers `wiki`). Tools are thin wrappers over the core; the bundle path is resolved and path-contained on every call.
+`okf-mcp` (`okf_kit/mcp.py`, FastMCP) exposes registered OKF bundles to any MCP client. Stable servers default to `--write-mode disabled --lane stable`; their tool list contains no mutators. A separate review checkout can use `--write-mode draft --lane preview`, which adds draft authoring tools that commit and push the checked-out preview branch. Each concept is also available as an `okf://<bundle>/concepts/<cid>.md` resource.
 
 # Definition
 
 Tools:
 
-- **`search`** / **`read_concept`** / **`validate`** — read-only, the discovery + progressive-context + conformance surface.
-- **`create_concept`** — creates one concept, enforcing a **richness floor**: the body must be ≥120 words *and* contain a depth heading (`# Overview`, `# Definition`, `# Schema`, `# Endpoints`, `# API`, `# Steps`, `# Examples`, `# Citations`). Thin/generic bodies are rejected — so MCP-authored concepts are substantive by construction. Containment + atomic exclusive create are delegated to [templates module](/core/templates.md).
+- **`search`** / **`read_concept`** / **`graph_links`** / **`validate`** — paginated discovery, directional context, typed graph traversal, and conformance/publication checks.
+- **`list_bundles`** / **`sync_status`** — registry discovery and stable/preview revision reconciliation.
+- **`create_concept`** — preview-only creation with a richness floor and draft provenance. Containment + atomic exclusive create are delegated to [templates module](/core/templates.md).
 - **`init_bundle`** — idempotent; (re)writes the root `index.md`.
 
 A `BundleRegistry` maps registered names to resolved root paths and rejects unknown bundles with a helpful "registered: …" message. Per-concept resources are registered at startup as static no-arg readers (title/description from frontmatter).

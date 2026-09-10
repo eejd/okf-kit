@@ -79,24 +79,35 @@ class Report:
     errors: list[Finding] = field(default_factory=list)
     warnings: list[Finding] = field(default_factory=list)
     info: list[Finding] = field(default_factory=list)
+    publication_errors: list[Finding] = field(default_factory=list)
+    profile: str | None = None
 
     @property
     def conformant(self) -> bool:
         return not self.errors
 
+    @property
+    def publishable(self) -> bool:
+        return self.conformant and not self.publication_errors
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "conformant": self.conformant,
+            "publishable": self.publishable,
+            "profile": self.profile,
             "errors": [vars(f) for f in self.errors],
+            "publication_errors": [vars(f) for f in self.publication_errors],
             "warnings": [vars(f) for f in self.warnings],
             "info": [vars(f) for f in self.info],
         }
 
 
-def validate_bundle(root: Path) -> Report:
+def validate_bundle(root: Path, profile: str | None = None) -> Report:
     """Validate every ``.md`` under ``root`` against OKF v0.2 conformance."""
+    if profile not in {None, "hive"}:
+        raise ValueError("unknown publication profile")
     root = Path(root).resolve()
-    report = Report()
+    report = Report(profile=profile)
     concept_count = 0
     root_okf_version: str | None = None
     root_index_seen = False
@@ -148,6 +159,8 @@ def validate_bundle(root: Path) -> Report:
 
         concept_count += 1
         _check_concept(report, concept, extension_key_counts, extension_key_examples)
+        if profile == "hive":
+            _check_hive_publication(report, concept)
 
     for key, count in sorted(extension_key_counts.items()):
         examples = extension_key_examples.get(key, [])[:_MAX_EXTENSION_KEY_EXAMPLES]
@@ -165,6 +178,72 @@ def validate_bundle(root: Path) -> Report:
 
     _check_okf_version(report, root, root_index_seen, root_okf_version)
     return report
+
+
+_HIVE_TYPES = frozenset(
+    {
+        "ADR", "Decision", "Plan", "Research", "Architecture", "Contract", "Runbook",
+        "Evidence", "Epic", "Hive", "Service", "MCP Server", "Reference",
+    }
+)
+_HIVE_ENUMS = {
+    "status": frozenset({"draft", "stable", "deprecated"}),
+    "governance": frozenset(
+        {"proposed", "accepted", "rejected", "superseded", "not-applicable"}
+    ),
+    "implementation": frozenset(
+        {"planned", "in-progress", "blocked", "implemented", "retired", "not-applicable"}
+    ),
+}
+_HIVE_APPLICABILITY = frozenset(
+    {"v1", "v2/federation", "post-v1", "timeless", "historical"}
+)
+
+
+def _publication_error(report: Report, concept: Any, code: str, message: str) -> None:
+    report.publication_errors.append(
+        Finding("error", code, message, concept.cid, concept.path)
+    )
+
+
+def _check_hive_publication(report: Report, concept: Any) -> None:
+    """Apply the opt-in Hive dialect without altering generic OKF conformance."""
+    fm = concept.frontmatter
+    if fm.get("type") not in _HIVE_TYPES:
+        _publication_error(
+            report, concept, "hive-type", "type is not in the Hive controlled vocabulary"
+        )
+    for key, allowed in _HIVE_ENUMS.items():
+        value = fm.get(key)
+        if value not in allowed:
+            _publication_error(
+                report, concept, f"hive-{key}",
+                f"{key} must be one of: {', '.join(sorted(allowed))}",
+            )
+    applicability = fm.get("applicability")
+    if (
+        not isinstance(applicability, list)
+        or not applicability
+        or any(v not in _HIVE_APPLICABILITY for v in applicability)
+    ):
+        _publication_error(
+            report, concept, "hive-applicability",
+            "applicability must be a non-empty list of Hive applicability values",
+        )
+    for key in ("hive", "owner_repo"):
+        if not isinstance(fm.get(key), str) or not fm[key].strip():
+            _publication_error(
+                report, concept, f"hive-{key}", f"{key} must be a non-empty string"
+            )
+    origin = fm.get("origin")
+    if not isinstance(origin, dict) or any(
+        not isinstance(origin.get(key), str) or not origin[key]
+        for key in ("repo", "path", "commit", "digest")
+    ):
+        _publication_error(
+            report, concept, "hive-origin",
+            "origin must contain non-empty repo, path, commit, and digest strings",
+        )
 
 
 def _check_concept(

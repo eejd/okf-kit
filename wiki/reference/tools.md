@@ -9,39 +9,49 @@ description: Canonical reference for the okf CLI and okf-mcp server — each too
 
 Canonical reference for the `okf` CLI and the `okf-mcp` server. Each tool's **canonical description** — the agent trigger surface — lives in a `<!-- desc:start -->` … `<!-- desc:end -->` block below; the test suite asserts these match the strings embedded in [okf-mcp](/interfaces/okf-mcp.md), so this page and the server never drift (see [Tool doc sync](/conventions/tool-doc-sync.md)).
 
-Most commands operate on a *bundle* — a directory of OKF `.md` concept files. The seven MCP tools are `search`, `read_concept` (with `depth` for [progressive context](/architecture/progressive-context.md)), `validate`, `create_concept`, `init_bundle`, `list_bundles`, and `sync_status`; the `okf` CLI mirrors the first five plus `index regen`, `code index`, and `serve`. The CLI also has a skill-only `agent install` command for installing OKF skills into Claude Code or Codex.
+Most commands operate on a *bundle* — a directory of OKF `.md` concept files. Read-only servers expose `search`, `read_concept`, `graph_links`, `validate`, `list_bundles`, and `sync_status`. Preview servers started with `--write-mode draft --lane preview` additionally expose `create_concept` and `init_bundle`.
 
 ## search
 
 Full-text discovery. Ranked hits (exact title > frontmatter > body) with a snippet. Cheap: ids + snippets, no full bodies — the first step of progressive context.
 
-- **CLI:** `okf search <bundle> <query> [--type T --tag T --limit N] [--json]`
-- **MCP:** `search(bundle, query, type[]?, tag[]?, limit?) -> [{cid,title,type,snippet,score}]`
+- **CLI:** `okf search <bundle> <query> [--type T --tag T --metadata KEY=JSON --limit N --cursor C] [--json]`
+- **MCP:** `search(bundle, query, type[]?, tag[]?, metadata?, limit?, cursor?) -> {results,total,next_cursor}`
 
 <!-- desc:start -->
-Discover OKF concepts without loading full bodies. Searches title, description, body, tags, and type, then returns ranked hits with cid/title/type/snippet/score. Use this before read_concept when you do not already know the concept id, and narrow with type[] or tag[] when the bundle is large. Empty query lists concepts after filters. Example: search(bundle='analytics', query='customer churn', type=['Metric','Table']).
+Discover OKF concepts without loading full bodies. Searches title, description, body, tags, and type, then returns ranked hits with cid/title/type/snippet/score. Use this before read_concept when you do not already know the concept id, and narrow with type[], tag[], or exact metadata facets when the bundle is large. Returns a page with results, total, and an opaque next_cursor. Empty query lists concepts after filters. Example: search(bundle='analytics', query='customer churn', type=['Metric','Table']).
 <!-- desc:end -->
 
 ## read_concept
 
 Read one concept, or — with `depth>0` — its N-hop link neighborhood as concatenated Markdown under a token budget. This is the progressive-context loader.
 
-- **CLI:** `okf read <bundle> <concept-id> [--depth N --token-budget B]`
-- **MCP:** `read_concept(bundle, concept_id, depth=0, token_budget=8000) -> markdown`
+- **CLI:** `okf read <bundle> <concept-id> [--depth N --token-budget B --direction outgoing|incoming|both]`
+- **MCP:** `read_concept(bundle, concept_id, depth=0, token_budget=8000, direction='both') -> markdown`
 
 <!-- desc:start -->
-Read a concept by id, or progressively load its linked neighborhood. depth=0 returns only that concept's raw frontmatter plus Markdown body. depth=1..N returns the seed in full plus Markdown-linked neighbors in deterministic BFS order within token_budget; a trailing marker names omitted neighbors. Start at depth=0, then increase depth only when the answer needs surrounding context. Example: read_concept(bundle='analytics', concept_id='metrics/churn', depth=1).
+Read a concept by id, or progressively load its linked neighborhood. depth=0 returns only that concept's raw frontmatter plus Markdown body. depth=1..N returns the seed in full plus neighbors in the selected outgoing, incoming, or both direction in deterministic BFS order within token_budget; a trailing marker names omitted neighbors. Start at depth=0, then increase depth only when the answer needs surrounding context. Example: read_concept(bundle='analytics', concept_id='metrics/churn', depth=1).
+<!-- desc:end -->
+
+## graph_links
+
+Return relation metadata without loading bodies.
+
+- **MCP:** `graph_links(bundle, concept_id, direction='both', relation[]?) -> {bundle,concept_id,direction,edges}`
+
+<!-- desc:start -->
+Traverse graph edges without loading concept bodies. Returns typed incoming, outgoing, or bidirectional edges for one concept, including cross-bundle okf:// relations when the target bundle is registered. Filter by relation when only governs, implements, depends-on, evidence-for, supersedes, related, or ordinary Markdown links matter.
 <!-- desc:end -->
 
 ## validate
 
 Check OKF v0.2 conformance (SPEC §11). Returns `{conformant, errors, warnings, info}`. Errors block conformance; warnings/info are non-blocking.
 
-- **CLI:** `okf validate <bundle> [--json]` (exit 1 if not conformant)
-- **MCP:** `validate(bundle) -> {conformant, errors, warnings, info}`
+- **CLI:** `okf validate <bundle> [--profile hive] [--json]`
+- **MCP:** `validate(bundle) -> {conformant,publishable,errors,publication_errors,warnings,info}`
 
 <!-- desc:start -->
-Validate an OKF bundle against v0.2 conformance (SPEC §11). Returns {conformant, errors, warnings, info}. Errors such as missing frontmatter, invalid frontmatter, or empty type block conformance. Warnings such as missing title/description, invalid cids, and broken links are non-blocking. Info includes extension keys, nested sub-bundle markers, okf_version state, and empty bundles. Use after authoring and before publishing or CI. Example: validate(bundle='analytics').
+Validate an OKF bundle against v0.2 conformance (SPEC §11). Returns {conformant, publishable, errors, publication_errors, warnings, info}. Generic OKF conformance stays permissive; an optional server publication profile adds publishability checks without changing conformance. Errors such as missing frontmatter, invalid frontmatter, or empty type block conformance. Warnings such as missing title/description, invalid cids, and broken links are non-blocking. Info includes extension keys, nested sub-bundle markers, okf_version state, and empty bundles. Use after authoring and before publishing or CI. Example: validate(bundle='analytics').
 <!-- desc:end -->
 
 ## create_concept
@@ -82,20 +92,14 @@ List every bundle name registered on this server, alphabetically sorted (not reg
 
 ## sync_status
 
-Git provenance for a served bundle. Reports the containing repository's `HEAD` sha, current
-branch, and dirty state, plus whether this server was started with `--git-commit` (writes
-auto-commit + push) — `tracked: false` when the bundle directory is not inside a git work
-tree. This is the staleness signal for deployments that serve a git checkout: a client (or a
-freshness gate) can cite the exact served revision and detect drift from the source
-repository. Under `--git-commit`, `create_concept` also stamps `status: draft` and
-`generated: process:okf-mcp` trust fields (OKF v0.2 §5) so MCP-authored concepts are
-reviewable post hoc.
+Git provenance for a served bundle. Reports the stable or preview lane, write mode, served
+and upstream revisions, branch, dirty state, and reconciliation relationship.
 
-- **MCP:** `sync_status(bundle) -> {bundle, path, git_commit, tracked, repo?, sha?, branch?, detached?, dirty?}`
+- **MCP:** `sync_status(bundle) -> {bundle,path,lane,write_mode,tracked,served_sha?,upstream_ref?,upstream_sha?,reconciliation?,branch?,dirty?}`
   (`branch` is null with `detached: true` on a detached-HEAD checkout)
 
 <!-- desc:start -->
-Report a bundle's git provenance for staleness checks: the containing repository's HEAD sha, branch, and whether the working tree is dirty, plus whether this server auto-commits writes (git_commit). Returns tracked=false when the bundle is not inside a git repository. Use it to cite the exact served revision or to detect a serving checkout that has drifted from its source. Example: sync_status(bundle='analytics').
+Report a bundle's authority lane and git reconciliation state: lane, write_mode, served SHA, configured upstream ref and SHA, branch, dirty state, and whether the checkout is in-sync, ahead, behind, or diverged. Returns tracked=false outside a git repository.
 <!-- desc:end -->
 
 ## Build commands (CLI only)

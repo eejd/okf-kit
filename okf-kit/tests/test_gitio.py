@@ -305,8 +305,12 @@ def test_sync_status_tracked_and_untracked(tmp_path: Path):
     tracked = tool_sync_status(reg, git, "kb", git_commit=True)
     assert tracked["tracked"] is True
     assert tracked["git_commit"] is True
+    assert tracked["write_mode"] == "draft"
+    assert tracked["lane"] == "preview"
     assert tracked["branch"] == "main"
     assert tracked["sha"]
+    assert tracked["served_sha"] == tracked["upstream_sha"]
+    assert tracked["reconciliation"] == "in-sync"
     untracked = tool_sync_status(reg, git, "loose", git_commit=False)
     assert untracked["tracked"] is False
     assert untracked["git_commit"] is False

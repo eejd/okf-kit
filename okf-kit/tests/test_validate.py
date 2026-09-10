@@ -26,6 +26,14 @@ def test_conformant_bundle(tmp_path):
     assert r.errors == []
 
 
+def test_hive_profile_separates_conformance_from_publishability(tmp_path):
+    _w(tmp_path, "concept.md", "---\ntype: Note\ntitle: Concept\ndescription: d\n---\nbody\n")
+    report = validate_bundle(tmp_path, profile="hive")
+    assert report.conformant is True
+    assert report.publishable is False
+    assert report.publication_errors
+
+
 def test_missing_frontmatter_is_error(tmp_path):
     _w(tmp_path, "a.md", "no frontmatter\n")
     r = validate_bundle(tmp_path)

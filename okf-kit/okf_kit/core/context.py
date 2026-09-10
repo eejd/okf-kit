@@ -9,7 +9,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from okf_kit.core.links import build_adjacency, iter_concept_files, resolve_cid_path
+from okf_kit.core.links import (
+    build_adjacency,
+    build_backlinks,
+    concept_graph_edges,
+    iter_concept_files,
+    resolve_cid_path,
+)
 from okf_kit.core.model import Concept
 from okf_kit.core.parse import parse_concept
 from okf_kit.core.search import build_index, search
@@ -28,7 +34,11 @@ class ConceptNotFound(KeyError):
 
 
 def read_concept(
-    root: Path, cid: str, depth: int = 0, token_budget: int = 8000
+    root: Path,
+    cid: str,
+    depth: int = 0,
+    token_budget: int = 8000,
+    direction: str = "both",
 ) -> str:
     """Read one concept, or a depth-N neighborhood as concatenated Markdown.
 
@@ -46,6 +56,14 @@ def read_concept(
     concepts = _load_concepts(root)
     by_cid = {c.cid: c for c in concepts}
     adjacency = build_adjacency(root, concepts)
+    for concept in concepts:
+        typed_targets = {
+            edge.target_cid
+            for edge in concept_graph_edges(root, concept, "local")
+            if edge.target_bundle == "local" and edge.target_cid in adjacency
+        }
+        adjacency[concept.cid] = sorted(set(adjacency[concept.cid]) | typed_targets)
+    adjacency = traversal_adjacency(adjacency, direction)
 
     levels = _bfs_levels(cid, adjacency, depth)
 
@@ -61,10 +79,13 @@ def read_concept(
     omitted: list[str] = []
     for level_idx in range(1, len(levels)):
         for nb in levels[level_idx]:
-            concept = by_cid.get(nb)
-            if concept is None:
+            neighbor_concept = by_cid.get(nb)
+            if neighbor_concept is None:
                 continue
-            block = f"# {nb} (depth {level_idx})\n\n{concept.path.read_text(encoding='utf-8')}\n\n"
+            block = (
+                f"# {nb} (depth {level_idx})\n\n"
+                f"{neighbor_concept.path.read_text(encoding='utf-8')}\n\n"
+            )
             cost = _estimate(block)
             if budget_used + cost > token_budget:
                 omitted.append(nb)
@@ -81,6 +102,23 @@ def read_concept(
             f"{preview}{more} — raise depth or token_budget, or read each).\n"
         )
     return "".join(parts)
+
+
+def traversal_adjacency(
+    outgoing: dict[str, list[str]], direction: str
+) -> dict[str, list[str]]:
+    """Select outgoing, incoming, or bidirectional deterministic adjacency."""
+    if direction == "outgoing":
+        return outgoing
+    incoming = build_backlinks(outgoing)
+    if direction == "incoming":
+        return incoming
+    if direction != "both":
+        raise ValueError("direction must be outgoing, incoming, or both")
+    return {
+        cid: sorted(set(outgoing.get(cid, [])) | set(incoming.get(cid, [])))
+        for cid in outgoing
+    }
 
 
 def _bfs_levels(seed: str, adjacency: dict[str, list[str]], depth: int) -> list[list[str]]:

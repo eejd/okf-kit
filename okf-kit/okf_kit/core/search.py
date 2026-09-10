@@ -27,6 +27,8 @@ short concepts over time?), not for scoring.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import math
 import re
 from collections import Counter
@@ -120,6 +122,7 @@ class _Doc:
     tags: list[str]
     description: str
     body: str
+    metadata: dict[str, Any]
     title_terms: Counter[str]
     tag_terms: Counter[str]
     type_terms: Counter[str]
@@ -225,6 +228,7 @@ def build_index(root: Path) -> Index:
                 tags=tags,
                 description=description,
                 body=concept.body,
+                metadata=concept.frontmatter,
                 title_terms=title_terms,
                 tag_terms=tag_terms,
                 type_terms=type_terms,
@@ -247,6 +251,7 @@ def search(
     type: list[str] | None = None,
     tag: list[str] | None = None,
     limit: int = 20,
+    metadata: dict[str, Any] | None = None,
 ) -> list[Hit]:
     """Search an OKF index.
 
@@ -281,6 +286,10 @@ def search(
             continue
         if tag_filter is not None and not (set(doc.tags) & tag_filter):
             continue
+        if metadata and not all(
+            _metadata_matches(doc.metadata.get(key), value) for key, value in metadata.items()
+        ):
+            continue
         score = _score(index, norm_query, q_terms, doc)
         if not is_blank_query and score <= 0:
             continue
@@ -295,6 +304,55 @@ def search(
         )
     hits.sort(key=lambda h: (-h.score, h.cid))
     return hits[:limit]
+
+
+def search_page(
+    index: Index,
+    q: str,
+    *,
+    type: list[str] | None = None,
+    tag: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+    limit: int = 20,
+    cursor: str | None = None,
+) -> tuple[list[Hit], int, str | None]:
+    """Return one stable cursor page plus the total filtered result count.
+
+    Cursors are opaque base64-encoded offsets. Ranking and cid tie-breaking are
+    deterministic, so a cursor can be replayed against an unchanged bundle.
+    """
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    offset = _decode_cursor(cursor)
+    all_hits = search(index, q, type=type, tag=tag, metadata=metadata, limit=len(index.docs))
+    page = all_hits[offset:offset + limit]
+    next_offset = offset + len(page)
+    next_cursor = _encode_cursor(next_offset) if next_offset < len(all_hits) else None
+    return page, len(all_hits), next_cursor
+
+
+def _metadata_matches(actual: Any, expected: Any) -> bool:
+    """Exact metadata matching, with scalar membership for list-valued facets."""
+    if isinstance(actual, list) and not isinstance(expected, list):
+        return bool(expected in actual)
+    return bool(actual == expected)
+
+
+def _encode_cursor(offset: int) -> str:
+    return base64.urlsafe_b64encode(str(offset).encode("ascii")).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(cursor: str | None) -> int:
+    if cursor is None:
+        return 0
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        offset = int(base64.urlsafe_b64decode(padded.encode("ascii")).decode("ascii"))
+    except (binascii.Error, ValueError, UnicodeError) as exc:
+        raise ValueError("invalid search cursor") from exc
+    if offset < 0:
+        raise ValueError("invalid search cursor")
+    return offset
 
 
 def _score(index: Index, norm_query: str, q_terms: list[str], doc: _Doc) -> float:

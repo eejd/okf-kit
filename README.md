@@ -219,11 +219,12 @@ uv run okf serve mykb
 Then open the printed URL. Editing (frontmatter form, Markdown editor, CRUD) is
 the next milestone; this is read-only.
 
-The server exposes five tools — **`search`**, **`read_concept`** (with `depth`
-for progressive context), **`validate`**, plus **`create_concept`** (enforces a
-richness floor: ≥120 words + a depth section, so MCP-authored concepts are rich
-by construction) and **`init_bundle`** — and an `okf://<bundle>/concepts/<id>.md`
-resource per concept.
+The default stable server is read-only: **`search`**, **`read_concept`**,
+**`graph_links`**, **`validate`**, **`list_bundles`**, and **`sync_status`**.
+Start a review checkout with `--write-mode draft --lane preview` to add
+**`create_concept`** and **`init_bundle`**; those tools are absent when writes
+are disabled. Every concept also has an `okf://<bundle>/concepts/<id>.md`
+resource.
 
 ## Architecture
 

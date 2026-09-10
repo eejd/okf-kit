@@ -1,6 +1,6 @@
 """Git commit/push backend for MCP-authored bundle writes (eejd eco#11).
 
-When ``okf-mcp`` runs with ``--git-commit``, every successful write tool
+When ``okf-mcp`` runs with ``--write-mode draft --lane preview``, every successful write tool
 (``create_concept``, ``init_bundle``) commits the written file into the git
 repository containing the bundle and pushes to its default remote. The
 intended deployment is the "local hub" pattern: the serving checkout's
@@ -200,7 +200,7 @@ class GitWriter:
         time.sleep(_OBJECT_RACE_RETRY_DELAY_S)
         return self._git(*args)
 
-    def status(self) -> dict[str, Any]:
+    def status(self, upstream_ref: str = "origin/main") -> dict[str, Any]:
         """Repository state for the staleness/provenance signal: sha, branch, dirty.
 
         ``branch`` is ``None`` with ``detached: true`` on a detached-HEAD
@@ -211,9 +211,27 @@ class GitWriter:
         sha = self._git("rev-parse", "HEAD")
         branch = self._git("symbolic-ref", "--short", "HEAD")
         porcelain = self._git("status", "--porcelain")
+        upstream = self._git("rev-parse", upstream_ref)
+        relationship = "unknown"
+        if sha.ok and upstream.ok:
+            if sha.stdout == upstream.stdout:
+                relationship = "in-sync"
+            else:
+                served_before = self._git("merge-base", "--is-ancestor", "HEAD", upstream_ref)
+                upstream_before = self._git("merge-base", "--is-ancestor", upstream_ref, "HEAD")
+                if served_before.ok:
+                    relationship = "behind"
+                elif upstream_before.ok:
+                    relationship = "ahead"
+                else:
+                    relationship = "diverged"
         return {
             "repo": str(self.repo_root),
             "sha": sha.stdout if sha.ok else None,
+            "served_sha": sha.stdout if sha.ok else None,
+            "upstream_ref": upstream_ref,
+            "upstream_sha": upstream.stdout if upstream.ok else None,
+            "reconciliation": relationship,
             "branch": branch.stdout if branch.ok else None,
             "detached": (not branch.ok) if sha.ok else None,
             "dirty": bool(porcelain.stdout) if porcelain.ok else None,
