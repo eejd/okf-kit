@@ -1,4 +1,5 @@
 """Tests for okf_kit.cli — the `okf` CLI (subcommands, --json, exit codes)."""
+
 from __future__ import annotations
 
 import json
@@ -46,9 +47,19 @@ def test_validate_nonconformant_exits_1(tmp_path: Path, capsys):
     assert code == 1
 
 
+def test_validate_warning_only_exits_0_but_hive_publication_exits_1(tmp_path: Path, capsys):
+    (tmp_path / "a.md").write_text("---\ntype: Note\n---\nbody\n", encoding="utf-8")
+    code, _, _ = _run(["validate", str(tmp_path)], capsys)
+    assert code == 0
+    code, _, _ = _run(["validate", str(tmp_path), "--profile", "hive"], capsys)
+    assert code == 1
+
+
 def test_validate_json_output(tmp_path: Path, capsys):
     (tmp_path / "index.md").write_text("---\nokf_version: '0.1'\n---\n# Root\n", encoding="utf-8")
-    (tmp_path / "a.md").write_text("---\ntype: T\ntitle: A\ndescription: d.\n---\nx\n", encoding="utf-8")
+    (tmp_path / "a.md").write_text(
+        "---\ntype: T\ntitle: A\ndescription: d.\n---\nx\n", encoding="utf-8"
+    )
     code, out, _ = _run(["validate", str(tmp_path), "--json"], capsys)
     assert code == 0
     data = json.loads(out)
@@ -56,7 +67,9 @@ def test_validate_json_output(tmp_path: Path, capsys):
 
 
 def test_read_missing_exits_2(tmp_path: Path, capsys):
-    (tmp_path / "a.md").write_text("---\ntype: T\ntitle: A\ndescription: d.\n---\nx\n", encoding="utf-8")
+    (tmp_path / "a.md").write_text(
+        "---\ntype: T\ntitle: A\ndescription: d.\n---\nx\n", encoding="utf-8"
+    )
     code, _, err = _run(["read", str(tmp_path), "nope"], capsys)
     assert code == 2
     assert "not found" in err.lower()
@@ -72,11 +85,30 @@ def test_search_prints_hit(tmp_path: Path, capsys):
     assert "Customer Orders" in out
 
 
+def test_search_no_results_exits_0_and_invalid_cursor_exits_2(tmp_path: Path, capsys):
+    (tmp_path / "index.md").write_text("---\nokf_version: '0.2'\n---\n# Root\n", encoding="utf-8")
+    code, out, _ = _run(["search", str(tmp_path), "absent"], capsys)
+    assert code == 0
+    assert out.strip() == "no results"
+
+    code, _, err = _run(["search", str(tmp_path), "absent", "--cursor", "invalid"], capsys)
+    assert code == 2
+    assert "cursor" in err
+
+
+def test_help_exits_0(capsys):
+    code, out, _ = _run(["--help"], capsys)
+    assert code == 0
+    assert "usage: okf" in out
+
+
 def test_index_regen(tmp_path: Path, capsys):
     (tmp_path / "index.md").write_text("---\nokf_version: '0.1'\n---\n# Root\n", encoding="utf-8")
     tables = tmp_path / "tables"
     tables.mkdir()
-    (tables / "users.md").write_text("---\ntype: Table\ntitle: Users\ndescription: d.\n---\nx\n", encoding="utf-8")
+    (tables / "users.md").write_text(
+        "---\ntype: Table\ntitle: Users\ndescription: d.\n---\nx\n", encoding="utf-8"
+    )
     code, _, _ = _run(["index", "regen", str(tmp_path)], capsys)
     assert code == 0
     assert (tables / "index.md").exists()
@@ -244,9 +276,7 @@ def test_code_index_refreshes_generated_concepts_by_default(tmp_path: Path, caps
     code, out, _ = _run(["code", "index", str(repo), str(bundle)], capsys)
     assert code == 0
     assert "updated 1" in out
-    assert "new_helper" in (bundle / "code" / "pkg" / "service.py.md").read_text(
-        encoding="utf-8"
-    )
+    assert "new_helper" in (bundle / "code" / "pkg" / "service.py.md").read_text(encoding="utf-8")
 
 
 def test_agent_install_help(capsys):

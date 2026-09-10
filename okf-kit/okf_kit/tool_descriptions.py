@@ -22,7 +22,7 @@ READ_DESC = (
 
 VALIDATE_DESC = (
     "Validate an OKF bundle against v0.2 conformance (SPEC §11). Returns "
-    "{conformant, publishable, errors, publication_errors, warnings, info}. Generic OKF "
+    "{conformant, publishable, profile, errors, publication_errors, warnings, info}. Generic OKF "
     "conformance stays permissive; an optional server publication profile adds publishability "
     "checks without changing conformance. Errors such as missing frontmatter, invalid "
     "frontmatter, or empty type block conformance. Warnings such as missing title/description, "

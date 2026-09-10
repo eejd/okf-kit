@@ -20,4 +20,8 @@ Unknown frontmatter keys and unknown `type` values are **preserved**, never reje
 
 # Examples
 
-This is why both the CLI and MCP are so thin: they call `parse_concept` and `validate_bundle` and present the result. The CLI prints the report and maps `conformant` to exit code; the MCP `validate` tool returns it as JSON. Details in [parse module](/core/parse.md) and [validate module](/core/validate.md).
+This is why both the CLI and MCP are so thin: they call `parse_concept` and `validate_bundle` and
+present the result. Generic CLI validation exits `0` when `conformant` is true and `1` otherwise;
+profile validation exits `0` only when `publishable` is true. MCP `validate` returns both booleans
+plus `profile`, `errors`, `publication_errors`, `warnings`, and `info`. Details are in the
+[CLI interface](/interfaces/okf-cli.md) and [validate module](/core/validate.md).

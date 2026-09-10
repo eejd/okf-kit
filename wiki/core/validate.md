@@ -35,6 +35,13 @@ bundle, or establish cross-bundle graph connectivity. It therefore always return
 validator must clear those checks before publication; okf-kit never claims that concept-level
 validation alone makes a bundle publishable.
 
+The shared `hive-publication-conformance.v1.json` case corpus is canonically owned by
+knowledge-hive. okf-kit keeps a byte-identical execution copy under `tests/fixtures/`. Version v1
+is pinned to SHA-256
+`faf157d80fadb4269807e020ae96c42aba37c6b8cbd959eb0b99c6bc9d3e28cc`; both repositories must
+assert and execute that exact digest. Changing any case creates a new reviewed contract revision
+and requires synchronized copies and digest assertions in both repositories.
+
 # API
 
 `Report.to_dict()` serializes to `{conformant, publishable, profile, errors,

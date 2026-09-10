@@ -5,6 +5,7 @@ guards the wiki as the documentation home.
 - The canonical tool descriptions in `wiki/reference/tools.md` are synced with the
   strings in `okf_kit/mcp.py` (design §11 — tools documented in synced places).
 """
+
 from __future__ import annotations
 
 import re
@@ -51,6 +52,40 @@ def test_readme_documents_write_guard_and_search_compatibility():
     assert "Git-backed preview authoring" in readme
     assert "explicit preview refspec" in readme
     assert "response_version=legacy" in readme
+    assert '"schema_version":"1"' in readme
+    assert "searches with no results" in readme
+    assert "`--help` exits `0`" in readme
+
+
+def test_wiki_documents_search_shapes_and_cli_exit_semantics():
+    response_docs = [
+        TOOLS_REFERENCE,
+        WIKI / "interfaces" / "okf-cli.md",
+        WIKI / "interfaces" / "okf-mcp.md",
+        WIKI / "core" / "search.md",
+    ]
+    for path in response_docs:
+        text = path.read_text(encoding="utf-8")
+        assert '"schema_version":"1"' in text, path
+        assert "results" in text and "total" in text and "next_cursor" in text, path
+        assert "cid" in text and "snippet" in text and "score" in text, path
+        assert "legacy" in text.lower() and "cursor" in text.lower(), path
+
+    exit_docs = [TOOLS_REFERENCE, WIKI / "interfaces" / "okf-cli.md"]
+    for path in exit_docs:
+        text = path.read_text(encoding="utf-8")
+        assert "no search" in text, path
+        assert "warnings/info only" in text, path
+        assert "`--help` exits `0`" in text, path
+        assert "invalid cursor" in text, path
+
+
+def test_hive_conformance_fixture_contract_is_documented():
+    text = (WIKI / "core" / "validate.md").read_text(encoding="utf-8")
+    assert "canonically owned by\nknowledge-hive" in text
+    assert "byte-identical" in text
+    assert "faf157d80fadb4269807e020ae96c42aba37c6b8cbd959eb0b99c6bc9d3e28cc" in text
+    assert "both repositories must\nassert and execute that exact digest" in text
 
 
 def _extract_description(md: str, tool: str) -> str:

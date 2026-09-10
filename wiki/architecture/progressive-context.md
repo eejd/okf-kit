@@ -6,7 +6,12 @@ description: 'The load-bearing commitment — agents load the minimum and expand
 ---
 # Overview
 
-Agents must not dump a whole bundle into context. OKF's answer is **one primitive, three depths**: `search` returns a cheap hit list (cid/title/type/snippet — no bodies); `read_concept(depth=0)` returns one concept's raw text; `read_concept(depth=1..N)` returns the seed in full plus its N-hop Markdown-linked neighborhood, concatenated and truncated to a token budget. An agent starts cheap and expands only when the answer needs more.
+Agents must not dump a whole bundle into context. OKF's answer is **one primitive, three depths**:
+`search` returns a cheap cursor page (`results` contain cid/title/type/snippet/score, with `total`
+and `next_cursor`, but no bodies); `read_concept(depth=0)` returns one concept's raw text;
+`read_concept(depth=1..N)` returns the seed in full plus its N-hop Markdown-linked neighborhood,
+concatenated and truncated to a token budget. An agent starts cheap and expands only when the
+answer needs more.
 
 # Definition
 

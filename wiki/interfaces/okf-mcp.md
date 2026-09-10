@@ -12,12 +12,20 @@ description: The `okf-mcp` MCP server — reviewed stable and writable preview l
 
 Tools:
 
-- **`search`** / **`read_concept`** / **`graph_links`** / **`validate`** — revision-bound paginated discovery, directional context, typed graph traversal, and conformance/publication checks. Search has a temporary `legacy` response version for pre-0.3 list consumers.
+- **`search`** / **`read_concept`** / **`graph_links`** / **`validate`** — revision-bound paginated discovery, directional context, typed graph traversal, and conformance/publication checks. Search v1 returns `{"schema_version":"1","results":[Hit,...],"total":N,"next_cursor":null|string}`; each hit has `cid`, `title`, `type`, `snippet`, and numeric `score`. The temporary `legacy` response returns `[Hit,...]` and rejects cursors.
 - **`list_bundles`** / **`sync_status`** — registry discovery and stable/preview revision reconciliation.
 - **`create_concept`** — preview-only creation with a richness floor and server-controlled draft provenance. Caller verified/trust metadata is rejected. Containment + atomic exclusive create are delegated to [templates module](/core/templates.md).
 - **`init_bundle`** — idempotent; (re)writes the root `index.md`.
 
 A `BundleRegistry` maps registered names to resolved root paths and rejects unknown bundles with a helpful "registered: …" message. Per-concept resources are registered at startup as static no-arg readers (title/description from frontmatter).
+
+`read_concept` returns Markdown text. `graph_links` returns
+`{bundle,concept_id,direction,edges}`; each edge carries source/target OKF URIs, bundle ids,
+concept ids, and `relation`. `validate` returns
+`{conformant,publishable,profile,errors,publication_errors,warnings,info}`. `list_bundles` returns
+`[{bundle,path},...]`. `sync_status` always returns bundle/path/lane/write-mode/expected-branch/
+tracked fields and adds served/upstream revision, reconciliation, branch/detached, and dirty fields
+for a Git checkout. MCP call failures are protocol errors rather than CLI process exit codes.
 
 # API
 

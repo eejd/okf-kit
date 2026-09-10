@@ -22,6 +22,13 @@ Full-text discovery. Ranked hits (exact title > frontmatter > body) with a snipp
 Discover OKF concepts without loading full bodies. Searches title, description, body, tags, and type, then returns ranked hits with cid/title/type/snippet/score. Use this before read_concept when you do not already know the concept id, and narrow with type[], tag[], or exact metadata facets when the bundle is large. Returns a page with schema_version, results, total, and an opaque next_cursor bound to the query, filters, and bundle revision. Set response_version='legacy' while migrating pre-0.3 list clients. Empty query lists concepts after filters. Example: search(bundle='analytics', query='customer churn', type=['Metric','Table']).
 <!-- desc:end -->
 
+The v1 response is exactly
+`{"schema_version":"1","results":[Hit,...],"total":N,"next_cursor":null|string}`, where each
+`Hit` contains `cid`, `title`, `type`, `snippet`, and numeric `score`. `total` counts every match
+before pagination. `next_cursor` is null on the final page. Legacy mode returns `[Hit,...]`
+directly and rejects any cursor. CLI `--response-version` selects this shape only with `--json`;
+plain output remains one tab-separated row per hit and prints `no results` for an empty page.
+
 ## read_concept
 
 Read one concept, or — with `depth>0` — its N-hop link neighborhood as concatenated Markdown under a token budget. This is the progressive-context loader.
@@ -45,20 +52,23 @@ Traverse graph edges without loading concept bodies. Returns typed incoming, out
 
 ## validate
 
-Check OKF v0.2 conformance (SPEC §11). Returns `{conformant, errors, warnings, info}`. Errors block conformance; warnings/info are non-blocking.
+Check OKF v0.2 conformance (SPEC §11). Returns
+`{conformant,publishable,profile,errors,publication_errors,warnings,info}`. Conformance errors
+block conformance; profile publication errors separately block publishability. Warnings/info are
+non-blocking.
 
 - **CLI:** `okf validate <bundle> [--profile hive] [--json]`
-- **MCP:** `validate(bundle) -> {conformant,publishable,errors,publication_errors,warnings,info}`
+- **MCP:** `validate(bundle) -> {conformant,publishable,profile,errors,publication_errors,warnings,info}`
 
 <!-- desc:start -->
-Validate an OKF bundle against v0.2 conformance (SPEC §11). Returns {conformant, publishable, errors, publication_errors, warnings, info}. Generic OKF conformance stays permissive; an optional server publication profile adds publishability checks without changing conformance. Errors such as missing frontmatter, invalid frontmatter, or empty type block conformance. Warnings such as missing title/description, invalid cids, and broken links are non-blocking. Info includes extension keys, nested sub-bundle markers, okf_version state, and empty bundles. Use after authoring and before publishing or CI. Example: validate(bundle='analytics').
+Validate an OKF bundle against v0.2 conformance (SPEC §11). Returns {conformant, publishable, profile, errors, publication_errors, warnings, info}. Generic OKF conformance stays permissive; an optional server publication profile adds publishability checks without changing conformance. Errors such as missing frontmatter, invalid frontmatter, or empty type block conformance. Warnings such as missing title/description, invalid cids, and broken links are non-blocking. Info includes extension keys, nested sub-bundle markers, okf_version state, and empty bundles. Use after authoring and before publishing or CI. Example: validate(bundle='analytics').
 <!-- desc:end -->
 
 ## create_concept
 
 Create a concept **via MCP**. Unlike the CLI's `okf new` (a thin stub), it enforces a **richness floor**: the body must be ≥120 words and contain a depth section. This makes "created via MCP → good info" true by construction.
 
-- **MCP:** `create_concept(bundle, cid, type, title, description, body, tags?, resource?, timestamp?, extra?) -> {created, cid, path}`
+- **MCP:** `create_concept(bundle, cid, type, title, description, body, tags?, resource?, timestamp?, extra?) -> {created, cid, path, git?}`
 - Containment + atomic exclusive create are inherited from `core/templates.create_concept`.
 
 <!-- desc:start -->
@@ -69,7 +79,7 @@ Create one substantive draft OKF concept on the configured preview branch. The s
 
 Initialize (or re-initialize) a bundle root via MCP — writes `index.md` with `okf_version`. Idempotent.
 
-- **MCP:** `init_bundle(bundle, okf_version='0.2') -> {initialized, path}`
+- **MCP:** `init_bundle(bundle, okf_version='0.2') -> {initialized, path, git?}`
 
 <!-- desc:start -->
 Initialize a registered OKF bundle root in the preview lane by writing root index.md with okf_version after verifying the expected write branch. Creates the directory if needed and rewrites index.md if it already exists, so use it before authoring a new bundle or when intentionally resetting the root index metadata. Example: init_bundle(bundle='wiki').
@@ -114,4 +124,8 @@ The CLI builds thin stubs fast (`okf new`) and regenerates indexes; for rich, MC
 | `okf code index <workspace> <bundle>` | Index source code into compact OKF `CodeSummary` and `CodeModule` concepts for Python, Java, Scala, Rust, Go, Kotlin, Perl, C#, PHP, TypeScript, JavaScript, and HTML; supports `--profile compact|full`, `--repo`, `--include`, `--exclude`, and `--include-tests`; requires `okf-kit[treesitter]`. Syntax-derived dependency and reverse-dependent impact notes are candidates, not semantic proof. |
 | `okf agent install <claude-code|codex>` | Install or refresh `okf-search`, `okf-author`, and `okf-code` skills (`--scope project|user`, `--dry-run`; `--update` is accepted for compatibility). Skill-only: no subagents, hooks, MCP config, or plugins. |
 
-Exit codes: `0` success, `1` conformance errors, `2` usage / not-found / IO.
+Exit codes: `0` for success (including no search hits and validation with warnings/info only);
+`1` only when `validate` fails its selected gate (generic conformance errors, or any conformance/
+publication error when `--profile` is selected); `2` for CLI argument, not-found, invalid cursor/
+filter, existing-path, and I/O errors. `--help` exits `0`. MCP tools return their documented
+values or protocol errors; these process exit codes do not apply to individual MCP calls.

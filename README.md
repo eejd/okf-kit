@@ -105,7 +105,7 @@ uv run okf init mykb --name "My Knowledge Base"
 uv run okf new mykb Table tables/users --title "Users" --desc "User accounts."
 uv run okf new mykb Metric metrics/churn --title "Churn" --desc "Monthly churn, see [users](../tables/users.md)."
 
-uv run okf validate mykb                       # SPEC §11 conformance (exit 1 if not conformant)
+uv run okf validate mykb                       # SPEC §11 conformance
 uv run okf search mykb churn                   # full-text search
 uv run okf read mykb metrics/churn --depth 1   # progressive context: concept + neighborhood
 uv run okf index regen mykb                    # regenerate per-directory index.md
@@ -235,6 +235,17 @@ Search returns the v0.3 cursor-page contract by default. During migration,
 existing list consumers can request `response_version=legacy` (MCP) or
 `--response-version legacy` (CLI); cursors reject reuse with a different query,
 filter set, or bundle revision.
+
+With `--json`, the default CLI search response and the MCP response are
+`{"schema_version":"1","results":[...],"total":N,"next_cursor":null|string}`. Each result
+contains `cid`, `title`, `type`, `snippet`, and numeric `score`. Legacy mode returns only the
+result array and rejects cursors. Without `--json`, CLI search prints tab-separated result rows;
+the response-version flag does not change that text format.
+
+CLI exit codes are `0` for successful commands, including searches with no results and generic
+validation with warnings or info only; `1` only when `validate` fails its selected gate (generic
+conformance errors, or conformance/publication errors with `--profile`); and `2` for argument,
+not-found, invalid cursor/filter, existing-path, and I/O errors. `--help` exits `0`.
 
 ## Architecture
 

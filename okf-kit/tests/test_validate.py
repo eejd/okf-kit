@@ -1,4 +1,5 @@
 """Tests for okf_kit.core.validate — SPEC §11 conformance (REQ-BM-04, REQ-API-01..04)."""
+
 from __future__ import annotations
 
 import copy
@@ -9,6 +10,10 @@ from pathlib import Path
 import okf_kit.core.validate as validate_module
 import yaml
 from okf_kit.core.validate import Finding, Report, validate_bundle
+
+HIVE_PUBLICATION_CONFORMANCE_V1_SHA256 = (
+    "faf157d80fadb4269807e020ae96c42aba37c6b8cbd959eb0b99c6bc9d3e28cc"
+)
 
 
 def _w(root: Path, rel: str, content: str) -> Path:
@@ -52,12 +57,10 @@ def test_hive_profile_schema_copy_matches_canonical_contract():
 
 
 def test_hive_profile_shared_conformance_cases(tmp_path):
-    fixture = json.loads(
-        (
-            Path(__file__).with_name("fixtures")
-            / "hive-publication-conformance.v1.json"
-        ).read_text(encoding="utf-8")
-    )
+    fixture_path = Path(__file__).with_name("fixtures") / "hive-publication-conformance.v1.json"
+    fixture_bytes = fixture_path.read_bytes()
+    assert hashlib.sha256(fixture_bytes).hexdigest() == HIVE_PUBLICATION_CONFORMANCE_V1_SHA256
+    fixture = json.loads(fixture_bytes)
     assert fixture["schema_version"] == "hive-publication-conformance/v1"
 
     for case in fixture["cases"]:
