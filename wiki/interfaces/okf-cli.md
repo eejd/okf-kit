@@ -15,15 +15,29 @@ Subcommands:
 
 - **`init <dir>`** — scaffold a bundle root (`--okf-version`, `--name`).
 - **`new <bundle> <type> <path>`** — create a concept from a type template (`--title`, `--desc`, `--tag` repeatable).
-- **`validate <bundle>`** — SPEC §11 conformance; `--json` for a machine report. Exit 1 on errors, 0 otherwise.
-- **`search <bundle> <query>`** — full-text search; `--type` / `--tag` filters, `--limit`, `--json`.
+- **`validate <bundle>`** — SPEC §11 conformance; `--json` for a machine report.
+  `--profile hive` adds canonical Hive concept checks and remains non-publishable until the
+  external knowledge-hive portfolio validator clears manifest and cross-bundle checks. Exit 1
+  on conformance errors, or on publication errors when a profile is selected.
+- **`search <bundle> <query>`** — full-text search; repeatable `--type`, `--tag`, and exact
+  `--metadata KEY=JSON` filters; `--limit`, `--cursor`, `--response-version v1|legacy`, `--json`.
 - **`read <bundle> <concept_id>`** — read a concept; `--depth` for the neighborhood, `--token-budget`.
 - **`index regen <bundle>`** — regenerate per-directory `index.md` files.
 - **`code index <workspace> <bundle>`** — index or refresh source code into compact OKF `CodeSummary` and `CodeModule` concepts (`--profile compact|full`, `--language` repeatable, `--repo`, repeatable `--include` / `--exclude`, `--include-tests`; `--update` accepted for compatibility); requires `okf-kit[treesitter]`. Supported languages: Python, Java, Scala, Rust, Go, Kotlin, Perl, C#, PHP, TypeScript, JavaScript, and HTML. Generated dependency and reverse-dependent impact notes are syntax-derived candidates, not semantic proof.
 - **`serve <bundle>`** — launch the read-only web UI (`--host`, `--port`).
 - **`agent install <claude-code|codex>`** — install or refresh `okf-search`, `okf-author`, and `okf-code` skills (`--scope project|user`, `--dry-run`; `--update` is accepted for compatibility). This command is skill-only; it does not install subagents, hooks, MCP config, or plugins.
 
-Exit codes: `0` success, `1` conformance errors, `2` usage / not-found / IO errors. `ConceptNotFound` prints a "did you mean" hint.
+With `--json`, search v1 emits
+`{"schema_version":"1","results":[Hit,...],"total":N,"next_cursor":null|string}`. A `Hit` has
+`cid`, `title`, `type`, `snippet`, and numeric `score`; `total` is pre-pagination. Legacy mode
+emits `[Hit,...]` and rejects `--cursor`. Without `--json`, both modes print tab-separated rows
+and an empty page prints `no results`.
+
+Exit codes are `0` for successful commands, including no search hits and generic
+validation with warnings/info only; `1` only when `validate` fails the selected gate (generic
+conformance errors, or conformance/publication errors under `--profile`); and `2` for argument,
+not-found, invalid cursor/filter, existing-path, and I/O errors. `--help` exits `0`.
+`ConceptNotFound` also prints a "did you mean" hint when suggestions exist.
 
 # Examples
 

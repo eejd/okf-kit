@@ -102,3 +102,12 @@ def test_read_concept_deterministic(tmp_path):
         },
     )
     assert read_concept(tmp_path, "a", depth=1) == read_concept(tmp_path, "a", depth=1)
+
+
+def test_read_concept_incoming_direction_follows_backlinks(tmp_path):
+    _bundle(tmp_path, {
+        "a.md": "---\ntype: T\ntitle: A\n---\n[b](b.md)\n",
+        "b.md": "---\ntype: T\ntitle: B\n---\nbody\n",
+    })
+    out = read_concept(tmp_path, "b", depth=1, direction="incoming")
+    assert "# a (depth 1)" in out

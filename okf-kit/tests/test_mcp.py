@@ -11,9 +11,11 @@ from okf_kit.core.parse import parse_concept
 from okf_kit.mcp import (
     BundleRegistry,
     DuplicateBundleNameError,
+    _canonical_upstream_ref,
     _parse_bundle_arg,
     make_server,
     tool_create_concept,
+    tool_graph_links,
     tool_init_bundle,
     tool_list_bundles,
     tool_read_concept,
@@ -42,8 +44,19 @@ def test_registry_resolves_and_raises(tmp_path: Path):
 
 def test_tool_search_returns_dicts(tmp_path: Path):
     reg = BundleRegistry({"kb": _bundle(tmp_path)})
-    hits = tool_search(reg, "kb", "alpha")
-    assert hits and hits[0]["cid"] == "a"
+    page = tool_search(reg, "kb", "alpha")
+    assert page["results"][0]["cid"] == "a"
+    assert page["total"] == 1
+    assert page["schema_version"] == "1"
+
+
+def test_tool_search_legacy_response_preserves_hit_list(tmp_path: Path):
+    reg = BundleRegistry({"kb": _bundle(tmp_path)})
+    hits = tool_search(reg, "kb", "alpha", response_version="legacy")
+    assert isinstance(hits, list)
+    assert hits[0]["cid"] == "a"
+    with pytest.raises(ValueError, match="do not accept a cursor"):
+        tool_search(reg, "kb", "alpha", cursor="opaque", response_version="legacy")
 
 
 def test_tool_read_concept_returns_markdown(tmp_path: Path):
@@ -119,6 +132,16 @@ def test_tool_validate_logs_finding_counts(tmp_path: Path, capsys: pytest.Captur
     assert isinstance(record["n_info"], int)
 
 
+def test_tool_graph_links_logs_to_stderr(tmp_path: Path, capsys: pytest.CaptureFixture):
+    reg = BundleRegistry({"kb": _bundle(tmp_path)})
+    tool_graph_links(reg, "kb", "a")
+    record = _last_log_record(capsys)
+    assert record["tool"] == "graph_links"
+    assert record["ok"] is True
+    assert record["concept_id"] == "a"
+    assert isinstance(record["n_edges"], int)
+
+
 def test_tool_list_bundles_logs_count(tmp_path: Path, capsys: pytest.CaptureFixture):
     reg = BundleRegistry({"kb": _bundle(tmp_path)})
     tool_list_bundles(reg)
@@ -127,14 +150,15 @@ def test_tool_list_bundles_logs_count(tmp_path: Path, capsys: pytest.CaptureFixt
     assert record["n_bundles"] == 1
 
 
-def test_make_server_registers_all_tools(tmp_path: Path):
+def test_make_server_stable_omits_mutating_tools(tmp_path: Path):
     server = make_server({"kb": _bundle(tmp_path)})
     tools = asyncio.run(server.list_tools())
     names = {t.name for t in tools}
     assert {
-        "search", "read_concept", "validate", "create_concept", "init_bundle", "list_bundles",
-        "sync_status",
+        "search", "read_concept", "graph_links", "validate", "list_bundles", "sync_status",
     } <= names
+    assert "create_concept" not in names
+    assert "init_bundle" not in names
     for tool in tools:
         assert tool.description and len(tool.description) > 30  # agent-triggerable
 
@@ -180,7 +204,10 @@ def test_parse_bundle_arg_rejects_empty_name_or_path():
 
 
 def test_make_server_publishes_argument_metadata_and_annotations(tmp_path: Path):
-    server = make_server({"kb": _bundle(tmp_path)})
+    server = make_server(
+        {"kb": _bundle(tmp_path)}, write_mode="draft", lane="preview",
+        expected_write_branch="preview",
+    )
     tools = {t.name: t for t in asyncio.run(server.list_tools())}
 
     search_schema = tools["search"].inputSchema
@@ -206,12 +233,129 @@ def test_make_server_publishes_argument_metadata_and_annotations(tmp_path: Path)
     assert init_tool.annotations.idempotentHint is True
 
 
+def test_make_server_draft_requires_preview_lane(tmp_path: Path):
+    with pytest.raises(ValueError, match="preview"):
+        make_server({"kb": _bundle(tmp_path)}, write_mode="draft")
+
+
+def test_make_server_draft_requires_explicit_expected_branch(tmp_path: Path):
+    with pytest.raises(ValueError, match="expected_write_branch"):
+        make_server({"kb": _bundle(tmp_path)}, write_mode="draft", lane="preview")
+
+
+def test_make_server_draft_rejects_main_destination(tmp_path: Path):
+    with pytest.raises(ValueError, match="preview destination"):
+        make_server(
+            {"kb": _bundle(tmp_path)}, write_mode="draft", lane="preview",
+            expected_write_branch="main",
+        )
+
+
+@pytest.mark.parametrize(
+    ("expected_write_branch", "upstream_ref"),
+    [
+        ("stable", "origin/stable"),
+        ("release/stable", "origin/release/stable"),
+        ("release/stable", "refs/remotes/origin/release/stable"),
+        ("stable", "release/stable"),
+    ],
+)
+def test_make_server_draft_rejects_configured_upstream_branch(
+    tmp_path: Path,
+    expected_write_branch: str,
+    upstream_ref: str,
+):
+    with pytest.raises(ValueError, match="preview destination"):
+        make_server(
+            {"kb": _bundle(tmp_path)}, write_mode="draft", lane="preview",
+            expected_write_branch=expected_write_branch, upstream_ref=upstream_ref,
+        )
+
+
+@pytest.mark.parametrize(
+    "upstream_ref",
+    [
+        "origin/release/stable^0",
+        "origin/release/stable~1",
+        "a" * 40,
+    ],
+)
+def test_make_server_rejects_non_branch_upstream_revisions(
+    tmp_path: Path,
+    upstream_ref: str,
+):
+    with pytest.raises(ValueError, match="canonical remote branch ref"):
+        make_server({"kb": _bundle(tmp_path)}, upstream_ref=upstream_ref)
+
+
+def test_make_server_allows_distinct_suffix_branch_names(tmp_path: Path):
+    server = make_server(
+        {"kb": _bundle(tmp_path)},
+        write_mode="draft",
+        lane="preview",
+        expected_write_branch="stable",
+        upstream_ref="origin/release/stable",
+    )
+    assert {tool.name for tool in asyncio.run(server.list_tools())} >= {
+        "create_concept",
+        "init_bundle",
+    }
+
+
+def test_canonical_upstream_ref_preserves_full_hierarchical_branch():
+    assert _canonical_upstream_ref("origin/release/stable") == (
+        "refs/remotes/origin/release/stable",
+        "release/stable",
+    )
+
+
+def test_tool_search_paginates_and_filters_exact_metadata(tmp_path: Path):
+    root = _bundle(tmp_path)
+    for name, status in (("b", "stable"), ("c", "stable"), ("d", "draft")):
+        (root / f"{name}.md").write_text(
+            f"---\ntype: Note\ntitle: {name}\ndescription: d\nstatus: {status}\napplicability: [v1]\n---\ncommon\n",
+            encoding="utf-8",
+        )
+    reg = BundleRegistry({"kb": root})
+    first = tool_search(reg, "kb", "common", limit=1, metadata={"status": "stable", "applicability": "v1"})
+    assert first["total"] == 2 and first["next_cursor"]
+    second = tool_search(
+        reg, "kb", "common", limit=1,
+        metadata={"status": "stable", "applicability": "v1"},
+        cursor=first["next_cursor"],
+    )
+    assert first["results"][0]["cid"] != second["results"][0]["cid"]
+
+
+def test_graph_links_reports_typed_cross_bundle_incoming_and_outgoing(tmp_path: Path):
+    a = tmp_path / "a_bundle"
+    b = tmp_path / "b_bundle"
+    a.mkdir()
+    b.mkdir()
+    (a / "source.md").write_text(
+        "---\ntype: T\ntitle: Source\ndescription: d\ngoverns: okf://b/concepts/target.md\n---\n[target](okf://b/concepts/target.md)\n",
+        encoding="utf-8",
+    )
+    (b / "target.md").write_text("---\ntype: T\ntitle: Target\ndescription: d\n---\nbody\n", encoding="utf-8")
+    reg = BundleRegistry({"a": a, "b": b})
+    outgoing = tool_graph_links(reg, "a", "source", "outgoing")
+    assert {edge["relation"] for edge in outgoing["edges"]} == {"governs", "link"}
+    incoming = tool_graph_links(reg, "b", "target", "incoming", ["governs"])
+    assert [(edge["source_bundle"], edge["source_cid"]) for edge in incoming["edges"]] == [("a", "source")]
+
+
 def test_make_server_registers_okf_resources(tmp_path: Path):
     server = make_server({"kb": _bundle(tmp_path)})
     resources = asyncio.run(server.list_resources())
     uris = {str(r.uri) for r in resources}
     assert "okf://kb/concepts/a.md" in uris
     assert "okf://kb/concepts/tables/users.md" in uris
+
+
+def test_make_server_registers_multi_level_bundle_id_resources(tmp_path: Path):
+    server = make_server({"portfolio/science": _bundle(tmp_path)})
+    resources = asyncio.run(server.list_resources())
+    assert "okf://portfolio/science/concepts/a.md" in {str(item.uri) for item in resources}
 
 
 # --- create_concept (richness floor) + init_bundle -------------------------
@@ -320,6 +464,32 @@ def test_main_transport_http_alias_maps_to_streamable_http(
     monkeypatch.setattr(mcp_mod, "make_server", lambda bundles, **kw: _FakeServer())
     mcp_mod.main([str(tmp_path), "--transport", "http"])
     assert calls == ["streamable-http"]
+
+
+def test_main_passes_authority_lane_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from okf_kit import mcp as mcp_mod
+
+    seen: dict[str, object] = {}
+
+    class _FakeServer:
+        def run(self, transport: str = "stdio") -> None:
+            pass
+
+    def _spy(bundles: object, **kwargs: object) -> _FakeServer:
+        seen.update(kwargs)
+        return _FakeServer()
+
+    monkeypatch.setattr(mcp_mod, "make_server", _spy)
+    mcp_mod.main([
+        str(tmp_path), "--write-mode", "draft", "--lane", "preview",
+        "--expected-write-branch", "preview",
+        "--upstream-ref", "origin/main", "--publication-profile", "hive",
+    ])
+    assert seen["write_mode"] == "draft"
+    assert seen["lane"] == "preview"
+    assert seen["expected_write_branch"] == "preview"
+    assert seen["upstream_ref"] == "origin/main"
+    assert seen["publication_profile"] == "hive"
 
 
 def test_main_transport_streamable_http_direct(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "okf-kit"
-version = "0.2.0"
+version = "0.3.0"
 description = "Open Knowledge Format (OKF v0.2): core library, CLI, and MCP server."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -12,7 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "okf-kit" }]
 dependencies = [
     "pyyaml>=6.0",
-    "mcp>=1.9.0",  # 1.9.0+ required for streamable-http transport
+    "mcp>=1.9.0,<2",  # FastMCP v1 API; v2 renamed and changed this surface
     "pydantic>=2.0",
 ]
 

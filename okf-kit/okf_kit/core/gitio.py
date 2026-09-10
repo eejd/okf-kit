@@ -1,6 +1,6 @@
 """Git commit/push backend for MCP-authored bundle writes (eejd eco#11).
 
-When ``okf-mcp`` runs with ``--git-commit``, every successful write tool
+When ``okf-mcp`` runs with ``--write-mode draft --lane preview``, every successful write tool
 (``create_concept``, ``init_bundle``) commits the written file into the git
 repository containing the bundle and pushes to its default remote. The
 intended deployment is the "local hub" pattern: the serving checkout's
@@ -122,15 +122,43 @@ class GitWriter:
         ``None``, which callers treat as "git mode requested but not
         available for this bundle" — a logged warning, not an error.
         """
-        probe = cls(Path(bundle_root), push=push)
+        bundle = Path(bundle_root).resolve()
+        probe_root = bundle
+        while not probe_root.exists() and probe_root != probe_root.parent:
+            probe_root = probe_root.parent
+        probe = cls(probe_root, push=push)
         result = probe._git("rev-parse", "--show-toplevel")
         if not result.ok or not result.stdout:
             return None
-        return cls(Path(result.stdout), push=push)
+        repo_root = Path(result.stdout).resolve()
+        try:
+            bundle.relative_to(repo_root)
+        except ValueError:
+            return None
+        return cls(repo_root, push=push)
 
     # -- operations -------------------------------------------------------
 
-    def commit_and_push(self, paths: list[Path], message: str) -> dict[str, Any]:
+    def require_branch(self, expected_branch: str) -> None:
+        """Raise unless this checkout is attached to ``expected_branch``."""
+        if expected_branch == "main":
+            raise ValueError("draft writes may not target the stable main branch")
+        branch = self._git("symbolic-ref", "--short", "HEAD")
+        if not branch.ok:
+            raise ValueError("draft writes require an attached git branch")
+        if branch.stdout != expected_branch:
+            raise ValueError(
+                f"draft write branch mismatch: expected {expected_branch!r}, "
+                f"found {branch.stdout!r}"
+            )
+
+    def commit_and_push(
+        self,
+        paths: list[Path],
+        message: str,
+        *,
+        expected_branch: str | None = None,
+    ) -> dict[str, Any]:
         """``git add`` the paths, commit, and (optionally) push to the remote.
 
         Returns a structured dict — ``{committed, sha?, pushed, detail?}`` —
@@ -138,6 +166,12 @@ class GitWriter:
         identical index.md) reports ``committed: false`` with detail
         ``"nothing to commit"``; that is a no-op, not a failure.
         """
+        if expected_branch is not None:
+            try:
+                self.require_branch(expected_branch)
+            except ValueError as exc:
+                return {"committed": False, "pushed": False, "detail": str(exc)}
+
         rels: list[str] = []
         outside: list[str] = []
         for path in paths:
@@ -183,7 +217,12 @@ class GitWriter:
         }
         if not self.push:
             return result
-        pushed = self._retry_once("push", self.remote, "HEAD")
+        refspec = (
+            f"HEAD:refs/heads/{expected_branch}"
+            if expected_branch is not None
+            else "HEAD"
+        )
+        pushed = self._retry_once("push", self.remote, refspec)
         if pushed.ok:
             result["pushed"] = True
         else:
@@ -200,7 +239,7 @@ class GitWriter:
         time.sleep(_OBJECT_RACE_RETRY_DELAY_S)
         return self._git(*args)
 
-    def status(self) -> dict[str, Any]:
+    def status(self, upstream_ref: str = "origin/main") -> dict[str, Any]:
         """Repository state for the staleness/provenance signal: sha, branch, dirty.
 
         ``branch`` is ``None`` with ``detached: true`` on a detached-HEAD
@@ -211,9 +250,27 @@ class GitWriter:
         sha = self._git("rev-parse", "HEAD")
         branch = self._git("symbolic-ref", "--short", "HEAD")
         porcelain = self._git("status", "--porcelain")
+        upstream = self._git("rev-parse", upstream_ref)
+        relationship = "unknown"
+        if sha.ok and upstream.ok:
+            if sha.stdout == upstream.stdout:
+                relationship = "in-sync"
+            else:
+                served_before = self._git("merge-base", "--is-ancestor", "HEAD", upstream_ref)
+                upstream_before = self._git("merge-base", "--is-ancestor", upstream_ref, "HEAD")
+                if served_before.ok:
+                    relationship = "behind"
+                elif upstream_before.ok:
+                    relationship = "ahead"
+                else:
+                    relationship = "diverged"
         return {
             "repo": str(self.repo_root),
             "sha": sha.stdout if sha.ok else None,
+            "served_sha": sha.stdout if sha.ok else None,
+            "upstream_ref": upstream_ref,
+            "upstream_sha": upstream.stdout if upstream.ok else None,
+            "reconciliation": relationship,
             "branch": branch.stdout if branch.ok else None,
             "detached": (not branch.ok) if sha.ok else None,
             "dirty": bool(porcelain.stdout) if porcelain.ok else None,

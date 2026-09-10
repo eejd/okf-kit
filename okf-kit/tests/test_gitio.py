@@ -2,7 +2,7 @@
 
 Uses real git repositories under tmp_path in the deployment's "local hub"
 shape: a bare repository (the hub) plus a working clone containing the
-bundle, so ``git push origin HEAD`` exercises a credential-free file-path
+bundle, so an explicit preview refspec exercises a credential-free file-path
 remote exactly as production does.
 """
 from __future__ import annotations
@@ -11,6 +11,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 from okf_kit.core.gitio import GitWriter
 from okf_kit.core.parse import parse_concept
 from okf_kit.mcp import (
@@ -52,8 +53,12 @@ def _hub_and_clone(tmp_path: Path) -> tuple[Path, Path]:
     return hub, bundle
 
 
-def _hub_files(hub: Path) -> set[str]:
-    out = _run(hub, "ls-tree", "-r", "--name-only", "main")
+def _checkout_preview(bundle: Path) -> None:
+    _run(bundle.parent, "checkout", "-b", "preview")
+
+
+def _hub_files(hub: Path, ref: str = "main") -> set[str]:
+    out = _run(hub, "ls-tree", "-r", "--name-only", ref)
     return set(out.splitlines())
 
 
@@ -234,32 +239,107 @@ def test_status_reports_sha_branch_dirty(tmp_path: Path):
 
 def test_create_concept_git_mode_commits_and_stamps_trust_fields(tmp_path: Path):
     hub, bundle = _hub_and_clone(tmp_path)
+    _checkout_preview(bundle)
     reg = BundleRegistry({"kb": bundle})
     res = tool_create_concept(
         reg, "kb", "tables/users", "Table", "Users", "users table", RICH_BODY,
         git=GitBackend(reg),
+        expected_branch="preview",
     )
     assert res["created"] is True
     assert res["git"]["committed"] is True
     assert res["git"]["pushed"] is True
-    assert "kb/tables/users.md" in _hub_files(hub)
+    assert "kb/tables/users.md" in _hub_files(hub, "preview")
+    assert "kb/tables/users.md" not in _hub_files(hub, "main")
     fm = parse_concept(bundle / "tables" / "users.md", bundle).frontmatter
     assert fm["status"] == "draft"
     assert fm["generated"]["by"] == "process:okf-mcp"
     assert fm["generated"]["at"]
 
 
-def test_create_concept_git_mode_caller_trust_fields_win(tmp_path: Path):
+def test_create_concept_git_mode_overwrites_caller_status_and_generated(tmp_path: Path):
     _, bundle = _hub_and_clone(tmp_path)
+    _checkout_preview(bundle)
     reg = BundleRegistry({"kb": bundle})
     tool_create_concept(
         reg, "kb", "stable-one", "Table", "T", "d", RICH_BODY,
         extra={"status": "stable", "generated": {"by": "human:dep"}},
         git=GitBackend(reg),
+        expected_branch="preview",
     )
     fm = parse_concept(bundle / "stable-one.md", bundle).frontmatter
-    assert fm["status"] == "stable"
-    assert fm["generated"] == {"by": "human:dep"}
+    assert fm["status"] == "draft"
+    assert fm["generated"]["by"] == "process:okf-mcp"
+
+
+def test_create_concept_git_mode_rejects_verified_before_write(tmp_path: Path):
+    _, bundle = _hub_and_clone(tmp_path)
+    _checkout_preview(bundle)
+    reg = BundleRegistry({"kb": bundle})
+    with pytest.raises(ValueError, match="trust fields"):
+        tool_create_concept(
+            reg, "kb", "verified", "Table", "T", "d", RICH_BODY,
+            extra={"verified": {"by": "human:dep"}}, git=GitBackend(reg),
+            expected_branch="preview",
+        )
+    assert not (bundle / "verified.md").exists()
+
+
+def test_create_concept_rejects_wrong_expected_branch_before_write(tmp_path: Path):
+    _, bundle = _hub_and_clone(tmp_path)
+    reg = BundleRegistry({"kb": bundle})
+    with pytest.raises(ValueError, match="branch mismatch"):
+        tool_create_concept(
+            reg, "kb", "wrong-branch", "Table", "T", "d", RICH_BODY,
+            git=GitBackend(reg), expected_branch="preview",
+        )
+    assert not (bundle / "wrong-branch.md").exists()
+
+
+def test_commit_rechecks_expected_branch_before_git_add(tmp_path: Path):
+    _, bundle = _hub_and_clone(tmp_path)
+    path = bundle / "guarded.md"
+    path.write_text("---\ntype: Table\n---\nbody\n", encoding="utf-8")
+    writer = GitWriter.discover(bundle)
+    assert writer is not None
+    result = writer.commit_and_push([path], "msg", expected_branch="preview")
+    assert result["committed"] is False
+    assert "branch mismatch" in result["detail"]
+    assert "guarded.md" not in _run(bundle.parent, "diff", "--cached", "--name-only")
+
+
+def test_commit_rejects_main_as_expected_draft_branch_before_git_add(tmp_path: Path):
+    _, bundle = _hub_and_clone(tmp_path)
+    path = bundle / "guarded.md"
+    path.write_text("---\ntype: Table\n---\nbody\n", encoding="utf-8")
+    writer = GitWriter.discover(bundle)
+    assert writer is not None
+    result = writer.commit_and_push([path], "msg", expected_branch="main")
+    assert result["committed"] is False
+    assert "stable main" in result["detail"]
+    assert "guarded.md" not in _run(bundle.parent, "diff", "--cached", "--name-only")
+
+
+def test_commit_pushes_explicit_expected_preview_refspec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _, bundle = _hub_and_clone(tmp_path)
+    _checkout_preview(bundle)
+    path = bundle / "guarded.md"
+    path.write_text("---\ntype: Table\n---\nbody\n", encoding="utf-8")
+    writer = GitWriter.discover(bundle)
+    assert writer is not None
+    calls: list[tuple[str, ...]] = []
+    original = writer._retry_once
+
+    def recording_retry(*args: str):
+        calls.append(args)
+        return original(*args)
+
+    monkeypatch.setattr(writer, "_retry_once", recording_retry)
+    result = writer.commit_and_push([path], "msg", expected_branch="preview")
+    assert result["pushed"] is True
+    assert ("push", "origin", "HEAD:refs/heads/preview") in calls
 
 
 def test_create_concept_without_git_mode_stamps_nothing(tmp_path: Path):
@@ -272,28 +352,31 @@ def test_create_concept_without_git_mode_stamps_nothing(tmp_path: Path):
     assert "generated" not in fm
 
 
-def test_create_concept_git_mode_non_git_bundle_degrades(tmp_path: Path):
+def test_create_concept_git_mode_non_git_bundle_rejected_before_write(tmp_path: Path):
     loose = tmp_path / "loose"
     loose.mkdir()
     (loose / "index.md").write_text("---\nokf_version: '0.2'\n---\n# kb\n", encoding="utf-8")
     reg = BundleRegistry({"kb": loose})
-    res = tool_create_concept(
-        reg, "kb", "orphan", "Table", "T", "d", RICH_BODY, git=GitBackend(reg)
-    )
-    assert res["created"] is True  # the write itself must never fail on git problems
-    assert res["git"]["committed"] is False
-    assert "not inside a git repository" in res["git"]["detail"]
-    assert (loose / "orphan.md").is_file()
+    with pytest.raises(ValueError, match="git-tracked"):
+        tool_create_concept(
+            reg, "kb", "orphan", "Table", "T", "d", RICH_BODY,
+            git=GitBackend(reg), expected_branch="preview",
+        )
+    assert not (loose / "orphan.md").exists()
 
 
 def test_init_bundle_git_mode_commits(tmp_path: Path):
     hub, bundle = _hub_and_clone(tmp_path)
+    _checkout_preview(bundle)
     sub = bundle.parent / "kb2"
     reg = BundleRegistry({"kb2": sub})
-    res = tool_init_bundle(reg, "kb2", git=GitBackend(reg))
+    res = tool_init_bundle(
+        reg, "kb2", git=GitBackend(reg), expected_branch="preview"
+    )
     assert res["initialized"] is True
     assert res["git"]["committed"] is True
-    assert "kb2/index.md" in _hub_files(hub)
+    assert "kb2/index.md" in _hub_files(hub, "preview")
+    assert "kb2/index.md" not in _hub_files(hub, "main")
 
 
 def test_sync_status_tracked_and_untracked(tmp_path: Path):
@@ -305,8 +388,12 @@ def test_sync_status_tracked_and_untracked(tmp_path: Path):
     tracked = tool_sync_status(reg, git, "kb", git_commit=True)
     assert tracked["tracked"] is True
     assert tracked["git_commit"] is True
+    assert tracked["write_mode"] == "draft"
+    assert tracked["lane"] == "preview"
     assert tracked["branch"] == "main"
     assert tracked["sha"]
+    assert tracked["served_sha"] == tracked["upstream_sha"]
+    assert tracked["reconciliation"] == "in-sync"
     untracked = tool_sync_status(reg, git, "loose", git_commit=False)
     assert untracked["tracked"] is False
     assert untracked["git_commit"] is False

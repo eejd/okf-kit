@@ -1,0 +1,186 @@
+{
+  "schema_version": "hive-publication-conformance/v1",
+  "base": {
+    "type": "ADR",
+    "title": "Canonical decision",
+    "status": "stable",
+    "governance": "accepted",
+    "implementation": "implemented",
+    "applicability": [
+      "v1"
+    ],
+    "hive": "hive-ecosystem",
+    "owner_repo": "hive-ecosystem",
+    "subject_id": "adr/canonical-decision",
+    "authority": "current",
+    "origin": {
+      "repo": "hive-ecosystem",
+      "path": "docs/ADR/canonical.md",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "related": [
+      "reference"
+    ],
+    "governs": [
+      "contract"
+    ],
+    "implements": [
+      "implementation"
+    ],
+    "depends-on": [
+      "dependency"
+    ],
+    "evidence-for": [
+      "evidence"
+    ],
+    "supersedes": [
+      "prior"
+    ]
+  },
+  "cases": [
+    {
+      "name": "valid",
+      "valid": true
+    },
+    {
+      "name": "missing-title",
+      "valid": false,
+      "remove": "title"
+    },
+    {
+      "name": "missing-status",
+      "valid": false,
+      "remove": "status"
+    },
+    {
+      "name": "missing-governance",
+      "valid": false,
+      "remove": "governance"
+    },
+    {
+      "name": "missing-implementation",
+      "valid": false,
+      "remove": "implementation"
+    },
+    {
+      "name": "missing-applicability",
+      "valid": false,
+      "remove": "applicability"
+    },
+    {
+      "name": "missing-hive",
+      "valid": false,
+      "remove": "hive"
+    },
+    {
+      "name": "missing-owner-repo",
+      "valid": false,
+      "remove": "owner_repo"
+    },
+    {
+      "name": "missing-subject-id",
+      "valid": false,
+      "remove": "subject_id"
+    },
+    {
+      "name": "missing-authority",
+      "valid": false,
+      "remove": "authority"
+    },
+    {
+      "name": "missing-origin",
+      "valid": false,
+      "remove": "origin"
+    },
+    {
+      "name": "blank-title",
+      "valid": false,
+      "set": {
+        "title": ""
+      }
+    },
+    {
+      "name": "invalid-subject-id",
+      "valid": false,
+      "set": {
+        "subject_id": "ADR With Spaces"
+      }
+    },
+    {
+      "name": "invalid-authority",
+      "valid": false,
+      "set": {
+        "authority": "accepted"
+      }
+    },
+    {
+      "name": "invalid-origin-commit",
+      "valid": false,
+      "set": {
+        "origin.commit": "HEAD"
+      }
+    },
+    {
+      "name": "invalid-origin-digest",
+      "valid": false,
+      "set": {
+        "origin.digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    {
+      "name": "origin-extra-property",
+      "valid": false,
+      "set": {
+        "origin.branch": "main"
+      }
+    },
+    {
+      "name": "duplicate-applicability",
+      "valid": false,
+      "set": {
+        "applicability": [
+          "v1",
+          "v1"
+        ]
+      }
+    },
+    {
+      "name": "relation-not-list",
+      "valid": false,
+      "set": {
+        "related": "reference"
+      }
+    },
+    {
+      "name": "duplicate-relation",
+      "valid": false,
+      "set": {
+        "governs": [
+          "contract",
+          "contract"
+        ]
+      }
+    },
+    {
+      "name": "empty-relation-target",
+      "valid": false,
+      "set": {
+        "implements": [
+          ""
+        ]
+      }
+    },
+    {
+      "name": "legacy-nested-relations",
+      "valid": false,
+      "set": {
+        "relations": {
+          "related": [
+            "reference"
+          ]
+        }
+      }
+    }
+  ]
+}

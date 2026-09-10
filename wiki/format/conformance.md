@@ -21,4 +21,15 @@ Warnings (non-blocking) cover missing recommended `title` / `description`, conce
 
 # Examples
 
-The parser never raises on malformed input; it records a degraded concept and lets the validator decide. So conformance lives in one place — `validate_bundle` — and both the CLI and MCP call it (see [validate module](/core/validate.md)). The CLI exits 1 on errors, 0 otherwise; the MCP `validate` tool returns the same `{conformant, errors, warnings, info}`. The permissive stance is documented in [Permissive parsing](/architecture/permissive-parsing.md).
+The parser never raises on malformed input; it records a degraded concept and lets the validator
+decide. So conformance lives in one place — `validate_bundle` — and both the CLI and MCP call it
+(see [validate module](/core/validate.md)). Generic CLI validation exits `1` on errors and `0`
+otherwise. MCP `validate` returns
+`{conformant,publishable,profile,errors,publication_errors,warnings,info}`. The permissive stance
+is documented in [Permissive parsing](/architecture/permissive-parsing.md).
+
+An opt-in publication profile is a separate, stricter result and never changes OKF
+conformance. The Hive profile validates concept metadata against the canonical versioned Hive
+schema, then remains non-publishable until the knowledge-hive portfolio validator verifies
+manifest provenance, authority uniqueness, and cross-bundle connectivity. CLI profile mode
+exits 1 while any publication error remains.

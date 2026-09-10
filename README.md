@@ -105,7 +105,7 @@ uv run okf init mykb --name "My Knowledge Base"
 uv run okf new mykb Table tables/users --title "Users" --desc "User accounts."
 uv run okf new mykb Metric metrics/churn --title "Churn" --desc "Monthly churn, see [users](../tables/users.md)."
 
-uv run okf validate mykb                       # SPEC §11 conformance (exit 1 if not conformant)
+uv run okf validate mykb                       # SPEC §11 conformance
 uv run okf search mykb churn                   # full-text search
 uv run okf read mykb metrics/churn --depth 1   # progressive context: concept + neighborhood
 uv run okf index regen mykb                    # regenerate per-directory index.md
@@ -219,11 +219,33 @@ uv run okf serve mykb
 Then open the printed URL. Editing (frontmatter form, Markdown editor, CRUD) is
 the next milestone; this is read-only.
 
-The server exposes five tools — **`search`**, **`read_concept`** (with `depth`
-for progressive context), **`validate`**, plus **`create_concept`** (enforces a
-richness floor: ≥120 words + a depth section, so MCP-authored concepts are rich
-by construction) and **`init_bundle`** — and an `okf://<bundle>/concepts/<id>.md`
-resource per concept.
+The default stable server is read-only: **`search`**, **`read_concept`**,
+**`graph_links`**, **`validate`**, **`list_bundles`**, and **`sync_status`**.
+Start a review checkout with `--write-mode draft --lane preview
+--expected-write-branch <preview-branch>` to add
+**`create_concept`** and **`init_bundle`**; those tools are absent when writes
+are disabled. The preview branch must differ from `main` and the full branch
+named by `--upstream-ref`. Upstream refs use `REMOTE/BRANCH` or
+`refs/remotes/REMOTE/BRANCH`; revision expressions and raw object IDs are
+rejected. Writes verify the checked-out branch before mutation and push with
+an explicit preview refspec. Every concept also has an
+`okf://<bundle>/concepts/<id>.md` resource.
+
+Search returns the v0.3 cursor-page contract by default. During migration,
+existing list consumers can request `response_version=legacy` (MCP) or
+`--response-version legacy` (CLI); cursors reject reuse with a different query,
+filter set, or bundle revision.
+
+With `--json`, the default CLI search response and the MCP response are
+`{"schema_version":"1","results":[...],"total":N,"next_cursor":null|string}`. Each result
+contains `cid`, `title`, `type`, `snippet`, and numeric `score`. Legacy mode returns only the
+result array and rejects cursors. Without `--json`, CLI search prints tab-separated result rows;
+the response-version flag does not change that text format.
+
+CLI exit codes are `0` for successful commands, including searches with no results and generic
+validation with warnings or info only; `1` only when `validate` fails its selected gate (generic
+conformance errors, or conformance/publication errors with `--profile`); and `2` for argument,
+not-found, invalid cursor/filter, existing-path, and I/O errors. `--help` exits `0`.
 
 ## Architecture
 
@@ -233,7 +255,7 @@ One pure core, two thin presentation layers (no duplicated logic):
 okf_kit.core  (model · parse · validate · links · search · context · index · templates)
       │
       ├── okf_kit.cli   → `okf` CLI      (argparse: init/new/validate/search/read/index/code)
-      └── okf_kit.mcp   → `okf-mcp`      (FastMCP/stdio: search/read_concept/validate + okf://)
+      └── okf_kit.mcp   → `okf-mcp`      (FastMCP: stable reads + preview draft writes + okf://)
 ```
 
 The core is pure: deterministic, no network, no randomness. **Security:** every
@@ -244,7 +266,7 @@ escapes), on both the read and write paths. Code indexing lives outside
 
 ## Status
 
-**v0.1 — build + use a single OKF bundle.** In scope: parse/validate (SPEC §11),
+**v0.3 — governed OKF access and authoring.** In scope: parse/validate (SPEC §11),
 search, progressive-context read, `init`/`new`/`index regen`, the MCP server,
 the `okf-search`, `okf-author`, and `okf-code` skills, **`okf serve`** — a
 read-only browser UI (tree, search, graph, reader) launched on demand by an
@@ -256,7 +278,9 @@ TypeScript, JavaScript, and HTML.
 import/export. **Later milestones (see the [`project/backlog`](wiki/project/backlog.md) wiki concept):** producer
 (extract/enrich), governance (RBAC/PII/signing), and multi-bundle federation —
 including the future multi-level `<domain>/<subdomain>` bundles the design
-anticipates. **Git integration** is the only intentionally-deferred Phase-2 item.
+anticipates. Git-backed preview authoring, stable/read-only authority lanes,
+typed graph traversal, exact-metadata filtering, and cursor pagination are
+implemented; the remaining milestones are tracked in the backlog.
 
 ## Documentation
 

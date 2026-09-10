@@ -32,6 +32,8 @@ even though v0.2 introduces ``generated.at`` for the same purpose.
 """
 from __future__ import annotations
 
+import json
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -79,24 +81,35 @@ class Report:
     errors: list[Finding] = field(default_factory=list)
     warnings: list[Finding] = field(default_factory=list)
     info: list[Finding] = field(default_factory=list)
+    publication_errors: list[Finding] = field(default_factory=list)
+    profile: str | None = None
 
     @property
     def conformant(self) -> bool:
         return not self.errors
 
+    @property
+    def publishable(self) -> bool:
+        return self.conformant and not self.publication_errors
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "conformant": self.conformant,
+            "publishable": self.publishable,
+            "profile": self.profile,
             "errors": [vars(f) for f in self.errors],
+            "publication_errors": [vars(f) for f in self.publication_errors],
             "warnings": [vars(f) for f in self.warnings],
             "info": [vars(f) for f in self.info],
         }
 
 
-def validate_bundle(root: Path) -> Report:
+def validate_bundle(root: Path, profile: str | None = None) -> Report:
     """Validate every ``.md`` under ``root`` against OKF v0.2 conformance."""
+    if profile not in {None, "hive"}:
+        raise ValueError("unknown publication profile")
     root = Path(root).resolve()
-    report = Report()
+    report = Report(profile=profile)
     concept_count = 0
     root_okf_version: str | None = None
     root_index_seen = False
@@ -148,6 +161,8 @@ def validate_bundle(root: Path) -> Report:
 
         concept_count += 1
         _check_concept(report, concept, extension_key_counts, extension_key_examples)
+        if profile == "hive":
+            _check_hive_publication(report, concept)
 
     for key, count in sorted(extension_key_counts.items()):
         examples = extension_key_examples.get(key, [])[:_MAX_EXTENSION_KEY_EXAMPLES]
@@ -164,7 +179,119 @@ def validate_bundle(root: Path) -> Report:
         report.info.append(Finding("info", "empty-bundle", "bundle has no concept files"))
 
     _check_okf_version(report, root, root_index_seen, root_okf_version)
+    if profile == "hive":
+        report.publication_errors.append(
+            Finding(
+                "error",
+                "hive-external-publication-required",
+                "Hive profile v"
+                f"{_HIVE_PROFILE_SCHEMA_VERSION} concept metadata was checked, but "
+                "publishability also requires the knowledge-hive portfolio validator to "
+                "verify migration-manifest provenance, unique current authority across "
+                "bundles, and graph connectivity",
+            )
+        )
     return report
+
+
+_HIVE_PROFILE_SCHEMA_VERSION = "1"
+_HIVE_PROFILE_SCHEMA = json.loads(
+    (
+        Path(__file__).with_name("schemas")
+        / "hive-publication-profile.v1.schema.json"
+    ).read_text(encoding="utf-8")
+)
+
+
+def _publication_error(report: Report, concept: Any, code: str, message: str) -> None:
+    report.publication_errors.append(
+        Finding("error", code, message, concept.cid, concept.path)
+    )
+
+
+def _check_hive_publication(report: Report, concept: Any) -> None:
+    """Apply the canonical concept-level Hive profile without changing conformance."""
+    fm = concept.frontmatter
+    for message in _schema_errors(fm, _HIVE_PROFILE_SCHEMA):
+        _publication_error(
+            report,
+            concept,
+            "hive-profile-schema",
+            message,
+        )
+    if "relations" in fm:
+        _publication_error(
+            report,
+            concept,
+            "hive-relations-top-level",
+            "typed relations must use top-level relation keys",
+        )
+
+
+def _schema_errors(
+    value: Any, schema: dict[str, Any], path: str = "$"
+) -> list[str]:
+    """Validate the JSON-Schema subset used by the vendored Hive profile."""
+    reference = schema.get("$ref")
+    if isinstance(reference, str):
+        if not reference.startswith("#/$defs/"):
+            return [f"{path}: unsupported schema reference {reference!r}"]
+        definition = _HIVE_PROFILE_SCHEMA.get("$defs", {}).get(reference.rsplit("/", 1)[-1])
+        if not isinstance(definition, dict):
+            return [f"{path}: unresolved schema reference {reference!r}"]
+        return _schema_errors(value, definition, path)
+
+    errors: list[str] = []
+    expected = schema.get("type")
+    expected_types = expected if isinstance(expected, list) else [expected]
+    type_checks = {
+        "array": lambda candidate: isinstance(candidate, list),
+        "boolean": lambda candidate: isinstance(candidate, bool),
+        "object": lambda candidate: isinstance(candidate, dict),
+        "string": lambda candidate: isinstance(candidate, str),
+    }
+    supported_types = [item for item in expected_types if item in type_checks]
+    if supported_types and not any(type_checks[item](value) for item in supported_types):
+        return [f"{path}: must be {' or '.join(supported_types)}"]
+
+    allowed = schema.get("enum")
+    if isinstance(allowed, list) and value not in allowed:
+        errors.append(f"{path}: must be one of {', '.join(repr(item) for item in allowed)}")
+    minimum_length = schema.get("minLength")
+    if isinstance(value, str) and isinstance(minimum_length, int) and len(value) < minimum_length:
+        errors.append(f"{path}: must contain at least {minimum_length} character(s)")
+    pattern = schema.get("pattern")
+    if isinstance(value, str) and isinstance(pattern, str) and re.search(pattern, value) is None:
+        errors.append(f"{path}: must match {pattern}")
+
+    if isinstance(value, list):
+        minimum_items = schema.get("minItems")
+        if isinstance(minimum_items, int) and len(value) < minimum_items:
+            errors.append(f"{path}: must contain at least {minimum_items} item(s)")
+        if schema.get("uniqueItems") and any(
+            value[index] in value[:index] for index in range(len(value))
+        ):
+            errors.append(f"{path}: items must be unique")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(value):
+                errors.extend(_schema_errors(item, item_schema, f"{path}[{index}]"))
+
+    if isinstance(value, dict):
+        required = schema.get("required", [])
+        if isinstance(required, list):
+            for key in required:
+                if key not in value:
+                    errors.append(f"{path}: missing required property {key!r}")
+        properties = schema.get("properties", {})
+        if isinstance(properties, dict):
+            if schema.get("additionalProperties") is False:
+                for key in sorted(set(value) - set(properties)):
+                    errors.append(f"{path}: unexpected property {key!r}")
+            for key, child_schema in properties.items():
+                if key in value and isinstance(child_schema, dict):
+                    errors.extend(_schema_errors(value[key], child_schema, f"{path}.{key}"))
+    return errors
 
 
 def _check_concept(

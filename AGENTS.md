@@ -6,7 +6,7 @@
 
 **Delivery vehicle (approved 2026-06-16):** a Python core library exposed two ways — an `okf` **CLI** and an `okf-mcp` **MCP server** (the universal layer for Claude Code, Antigravity, and any MCP client). No REST, no GraphQL, no hosted web wiki. A Claude Code **pack** (skills/subagents/hooks) wraps the MCP server in v0.2.
 
-**v0.1 scope = build + use a KB:** scaffold (`okf init`), author (`okf new` + the `okf-author` skill), validate (SPEC §11), search, progressive-context read, regenerate `index.md` — shipped as a Python core + `okf` CLI + a 6-tool `okf-mcp` server + the `okf-author` skill. The full pack, single-file viewer, producer, governance, and multi-level federation are deferred — see `wiki/project/backlog.md`.
+**v0.3 scope = governed KB access:** scaffold, author, validate, paginated search, directional progressive context, typed graph traversal, and stable/preview authority lanes — shipped as a Python core, `okf` CLI, and `okf-mcp` server. The full pack, single-file viewer, producer, and multi-level federation remain deferred — see `wiki/project/backlog.md`.
 
 ### Two design commitments (load-bearing)
 - **Progressive context** — agents load the minimum and expand on demand under a token budget: `search` (cheap hit list) → `read_concept(depth=0)` (one concept) → `read_concept(depth=1..N)` (N-hop neighborhood). Design §7.
@@ -26,7 +26,7 @@ okf-kit/
 ├── okf_kit/              # Python package (one project, two entry points)
 │   ├── core/             # PURE library — model, parse, validate, links, search, context, index, templates
 │   ├── cli.py            # `okf` CLI (init / new / validate / search / read / index regen / serve)
-│   ├── mcp.py            # `okf-mcp` server (search/read_concept/validate + create_concept/init_bundle + okf://)
+│   ├── mcp.py            # `okf-mcp` stable reads + preview-only draft writes + okf://
 │   └── web/              # `okf serve` read-only web UI (stdlib http.server + vanilla-JS SPA)
 ├── tests/                # unit (core, 100%), cli (subprocess), mcp (in-memory client), fixtures/
 ├── skills/okf-author/    # v0.1 authoring skill (SKILL.md + template assets)
