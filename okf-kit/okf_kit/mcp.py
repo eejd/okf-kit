@@ -734,11 +734,14 @@ def make_server(
     if write_mode == "draft" and not expected_write_branch:
         raise ValueError("draft write mode requires expected_write_branch")
     if write_mode == "draft" and expected_write_branch is not None:
-        stable_branch = upstream_ref.rsplit("/", 1)[-1]
-        if expected_write_branch in {"main", stable_branch}:
+        targets_upstream = (
+            upstream_ref == expected_write_branch
+            or upstream_ref.endswith(f"/{expected_write_branch}")
+        )
+        if expected_write_branch == "main" or targets_upstream:
             raise ValueError(
                 "draft write mode requires a preview destination distinct from "
-                f"main and upstream stable branch {stable_branch!r}"
+                f"main and configured upstream ref {upstream_ref!r}"
             )
     reg = BundleRegistry(bundles)
     git = GitBackend(reg)

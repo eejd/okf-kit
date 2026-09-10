@@ -250,11 +250,24 @@ def test_make_server_draft_rejects_main_destination(tmp_path: Path):
         )
 
 
-def test_make_server_draft_rejects_configured_upstream_branch(tmp_path: Path):
+@pytest.mark.parametrize(
+    ("expected_write_branch", "upstream_ref"),
+    [
+        ("stable", "origin/stable"),
+        ("release/stable", "origin/release/stable"),
+        ("release/stable", "refs/remotes/origin/release/stable"),
+        ("release/stable", "release/stable"),
+    ],
+)
+def test_make_server_draft_rejects_configured_upstream_branch(
+    tmp_path: Path,
+    expected_write_branch: str,
+    upstream_ref: str,
+):
     with pytest.raises(ValueError, match="preview destination"):
         make_server(
             {"kb": _bundle(tmp_path)}, write_mode="draft", lane="preview",
-            expected_write_branch="stable", upstream_ref="origin/stable",
+            expected_write_branch=expected_write_branch, upstream_ref=upstream_ref,
         )
 
 
