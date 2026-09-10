@@ -15,7 +15,10 @@ Subcommands:
 
 - **`init <dir>`** — scaffold a bundle root (`--okf-version`, `--name`).
 - **`new <bundle> <type> <path>`** — create a concept from a type template (`--title`, `--desc`, `--tag` repeatable).
-- **`validate <bundle>`** — SPEC §11 conformance; `--json` for a machine report. Exit 1 on errors, 0 otherwise.
+- **`validate <bundle>`** — SPEC §11 conformance; `--json` for a machine report.
+  `--profile hive` adds canonical Hive concept checks and remains non-publishable until the
+  external knowledge-hive portfolio validator clears manifest and cross-bundle checks. Exit 1
+  on conformance errors, or on publication errors when a profile is selected.
 - **`search <bundle> <query>`** — full-text search; `--type` / `--tag` filters, `--limit`, `--json`.
 - **`read <bundle> <concept_id>`** — read a concept; `--depth` for the neighborhood, `--token-budget`.
 - **`index regen <bundle>`** — regenerate per-directory `index.md` files.

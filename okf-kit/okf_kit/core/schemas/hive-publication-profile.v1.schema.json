@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hive.local/schemas/hive-publication-profile.schema.json",
+  "title": "Hive OKF publication metadata",
+  "type": "object",
+  "required": ["type", "title", "status", "governance", "implementation", "applicability", "hive", "owner_repo", "subject_id", "authority", "origin"],
+  "properties": {
+    "type": {
+      "enum": ["ADR", "Decision", "Plan", "Research", "Architecture", "Contract", "Runbook", "Evidence", "Epic", "Hive", "Service", "MCP Server", "Reference"]
+    },
+    "title": {"type": "string", "minLength": 1},
+    "status": {"enum": ["draft", "stable", "deprecated"]},
+    "governance": {"enum": ["proposed", "accepted", "rejected", "superseded", "not-applicable"]},
+    "implementation": {"enum": ["planned", "in-progress", "blocked", "implemented", "retired", "not-applicable"]},
+    "applicability": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"enum": ["v1", "v2/federation", "post-v1", "timeless", "historical"]}
+    },
+    "hive": {"type": "string", "minLength": 1},
+    "owner_repo": {"type": "string", "minLength": 1},
+    "subject_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*$"},
+    "authority": {"enum": ["current", "superseded", "non-authoritative"]},
+    "origin": {
+      "type": "object",
+      "required": ["repo", "path", "commit", "digest"],
+      "properties": {
+        "repo": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "related": {"$ref": "#/$defs/relations"},
+    "governs": {"$ref": "#/$defs/relations"},
+    "implements": {"$ref": "#/$defs/relations"},
+    "depends-on": {"$ref": "#/$defs/relations"},
+    "evidence-for": {"$ref": "#/$defs/relations"},
+    "supersedes": {"$ref": "#/$defs/relations"},
+    "generated": {"type": ["boolean", "object"]},
+    "verified": {"type": ["boolean", "object", "string"]},
+    "sources": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "relations": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    }
+  },
+  "additionalProperties": true
+}

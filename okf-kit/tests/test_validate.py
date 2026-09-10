@@ -1,8 +1,13 @@
 """Tests for okf_kit.core.validate — SPEC §11 conformance (REQ-BM-04, REQ-API-01..04)."""
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 from pathlib import Path
 
+import okf_kit.core.validate as validate_module
+import yaml
 from okf_kit.core.validate import Finding, Report, validate_bundle
 
 
@@ -32,6 +37,51 @@ def test_hive_profile_separates_conformance_from_publishability(tmp_path):
     assert report.conformant is True
     assert report.publishable is False
     assert report.publication_errors
+
+
+def test_hive_profile_schema_copy_matches_canonical_contract():
+    schema_path = (
+        Path(validate_module.__file__).with_name("schemas")
+        / "hive-publication-profile.v1.schema.json"
+    )
+    payload = schema_path.read_bytes()
+    assert hashlib.sha256(payload).hexdigest() == (
+        "0abc13242fc82eec2a11bbc7936a3f36518a6449a840afe782a1be18f53b8a19"
+    )
+    assert json.loads(payload) == validate_module._HIVE_PROFILE_SCHEMA
+
+
+def test_hive_profile_shared_conformance_cases(tmp_path):
+    fixture = json.loads(
+        (
+            Path(__file__).with_name("fixtures")
+            / "hive-publication-conformance.v1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert fixture["schema_version"] == "hive-publication-conformance/v1"
+
+    for case in fixture["cases"]:
+        metadata = copy.deepcopy(fixture["base"])
+        if removed := case.get("remove"):
+            metadata.pop(removed)
+        for dotted_path, value in case.get("set", {}).items():
+            target = metadata
+            segments = dotted_path.split(".")
+            for segment in segments[:-1]:
+                target = target.setdefault(segment, {})
+            target[segments[-1]] = value
+        concept = "---\n" + yaml.safe_dump(metadata, sort_keys=False) + "---\nbody\n"
+        _w(tmp_path, "concept.md", concept)
+
+        report = validate_bundle(tmp_path, profile="hive")
+        local_errors = [
+            finding
+            for finding in report.publication_errors
+            if finding.code != "hive-external-publication-required"
+        ]
+        assert (not local_errors) is case["valid"], case["name"]
+        assert report.publishable is False
+        assert len(_codes(report.publication_errors, "hive-external-publication-required")) == 1
 
 
 def test_missing_frontmatter_is_error(tmp_path):
