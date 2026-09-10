@@ -47,6 +47,9 @@ def test_package_runtime_version_matches_project_metadata():
 def test_readme_documents_write_guard_and_search_compatibility():
     readme = (Path(__file__).resolve().parents[2] / "README.md").read_text(encoding="utf-8")
     assert "--expected-write-branch" in readme
+    assert "v0.3 — governed OKF access and authoring" in readme
+    assert "Git-backed preview authoring" in readme
+    assert "explicit preview refspec" in readme
     assert "response_version=legacy" in readme
 
 

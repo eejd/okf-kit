@@ -533,7 +533,8 @@ def tool_create_concept(
 
     In draft write mode the concept additionally receives the OKF
     v0.2 trust fields ``status: draft`` and ``generated: {by: process:okf-mcp}``
-    (caller-supplied values win — ``setdefault`` semantics), and the written
+    (caller-supplied status/generated values are overwritten and verified/trust
+    fields are rejected), and the written
     file is committed and pushed; the git outcome is reported in the result's
     ``git`` key and never fails the create.
     """
@@ -732,6 +733,13 @@ def make_server(
         raise ValueError("draft write mode requires the preview lane")
     if write_mode == "draft" and not expected_write_branch:
         raise ValueError("draft write mode requires expected_write_branch")
+    if write_mode == "draft" and expected_write_branch is not None:
+        stable_branch = upstream_ref.rsplit("/", 1)[-1]
+        if expected_write_branch in {"main", stable_branch}:
+            raise ValueError(
+                "draft write mode requires a preview destination distinct from "
+                f"main and upstream stable branch {stable_branch!r}"
+            )
     reg = BundleRegistry(bundles)
     git = GitBackend(reg)
     write_git = git if write_mode == "draft" else None
@@ -990,7 +998,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--expected-write-branch",
-        help="Required with draft mode; every write verifies this branch before mutation.",
+        help=(
+            "Required with draft mode; must name a preview branch distinct from main and "
+            "the upstream stable branch. Every write verifies it before mutation and "
+            "pushes explicitly to that preview ref."
+        ),
     )
     parser.add_argument(
         "--upstream-ref", default="origin/main",

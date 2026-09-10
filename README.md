@@ -222,10 +222,12 @@ the next milestone; this is read-only.
 The default stable server is read-only: **`search`**, **`read_concept`**,
 **`graph_links`**, **`validate`**, **`list_bundles`**, and **`sync_status`**.
 Start a review checkout with `--write-mode draft --lane preview
---expected-write-branch <branch>` to add
+--expected-write-branch <preview-branch>` to add
 **`create_concept`** and **`init_bundle`**; those tools are absent when writes
-are disabled. Every concept also has an `okf://<bundle>/concepts/<id>.md`
-resource.
+are disabled. The preview branch must differ from `main` and the branch named
+by `--upstream-ref`; writes verify the checked-out branch before mutation and
+push with an explicit preview refspec. Every concept also has an
+`okf://<bundle>/concepts/<id>.md` resource.
 
 Search returns the v0.3 cursor-page contract by default. During migration,
 existing list consumers can request `response_version=legacy` (MCP) or
@@ -251,7 +253,7 @@ escapes), on both the read and write paths. Code indexing lives outside
 
 ## Status
 
-**v0.1 — build + use a single OKF bundle.** In scope: parse/validate (SPEC §11),
+**v0.3 — governed OKF access and authoring.** In scope: parse/validate (SPEC §11),
 search, progressive-context read, `init`/`new`/`index regen`, the MCP server,
 the `okf-search`, `okf-author`, and `okf-code` skills, **`okf serve`** — a
 read-only browser UI (tree, search, graph, reader) launched on demand by an
@@ -263,7 +265,9 @@ TypeScript, JavaScript, and HTML.
 import/export. **Later milestones (see the [`project/backlog`](wiki/project/backlog.md) wiki concept):** producer
 (extract/enrich), governance (RBAC/PII/signing), and multi-bundle federation —
 including the future multi-level `<domain>/<subdomain>` bundles the design
-anticipates. **Git integration** is the only intentionally-deferred Phase-2 item.
+anticipates. Git-backed preview authoring, stable/read-only authority lanes,
+typed graph traversal, exact-metadata filtering, and cursor pagination are
+implemented; the remaining milestones are tracked in the backlog.
 
 ## Documentation
 

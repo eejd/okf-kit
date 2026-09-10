@@ -6,7 +6,7 @@ description: The `okf-mcp` MCP server — reviewed stable and writable preview l
 ---
 # Overview
 
-`okf-mcp` (`okf_kit/mcp.py`, FastMCP) exposes registered OKF bundles to any MCP client. Stable servers default to `--write-mode disabled --lane stable`; their tool list contains no mutators. A separate review checkout uses `--write-mode draft --lane preview --expected-write-branch <branch>`. The server verifies that branch before each filesystem mutation and again before commit/push. Each concept is also available as an `okf://<bundle>/concepts/<cid>.md` resource.
+`okf-mcp` (`okf_kit/mcp.py`, FastMCP) exposes registered OKF bundles to any MCP client. Stable servers default to `--write-mode disabled --lane stable`; their tool list contains no mutators. A separate review checkout uses `--write-mode draft --lane preview --expected-write-branch <preview-branch>`. The preview branch must differ from `main` and the branch named by `--upstream-ref`. The server verifies that branch before each filesystem mutation and again before commit/push, then pushes with an explicit preview refspec. Each concept is also available as an `okf://<bundle>/concepts/<cid>.md` resource.
 
 # Definition
 

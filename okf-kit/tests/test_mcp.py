@@ -242,6 +242,22 @@ def test_make_server_draft_requires_explicit_expected_branch(tmp_path: Path):
         make_server({"kb": _bundle(tmp_path)}, write_mode="draft", lane="preview")
 
 
+def test_make_server_draft_rejects_main_destination(tmp_path: Path):
+    with pytest.raises(ValueError, match="preview destination"):
+        make_server(
+            {"kb": _bundle(tmp_path)}, write_mode="draft", lane="preview",
+            expected_write_branch="main",
+        )
+
+
+def test_make_server_draft_rejects_configured_upstream_branch(tmp_path: Path):
+    with pytest.raises(ValueError, match="preview destination"):
+        make_server(
+            {"kb": _bundle(tmp_path)}, write_mode="draft", lane="preview",
+            expected_write_branch="stable", upstream_ref="origin/stable",
+        )
+
+
 def test_tool_search_paginates_and_filters_exact_metadata(tmp_path: Path):
     root = _bundle(tmp_path)
     for name, status in (("b", "stable"), ("c", "stable"), ("d", "draft")):

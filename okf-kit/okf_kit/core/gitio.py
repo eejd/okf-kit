@@ -141,6 +141,8 @@ class GitWriter:
 
     def require_branch(self, expected_branch: str) -> None:
         """Raise unless this checkout is attached to ``expected_branch``."""
+        if expected_branch == "main":
+            raise ValueError("draft writes may not target the stable main branch")
         branch = self._git("symbolic-ref", "--short", "HEAD")
         if not branch.ok:
             raise ValueError("draft writes require an attached git branch")
@@ -215,7 +217,12 @@ class GitWriter:
         }
         if not self.push:
             return result
-        pushed = self._retry_once("push", self.remote, "HEAD")
+        refspec = (
+            f"HEAD:refs/heads/{expected_branch}"
+            if expected_branch is not None
+            else "HEAD"
+        )
+        pushed = self._retry_once("push", self.remote, refspec)
         if pushed.ok:
             result["pushed"] = True
         else:
