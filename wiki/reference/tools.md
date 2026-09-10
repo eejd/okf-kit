@@ -105,11 +105,27 @@ List every bundle name registered on this server, alphabetically sorted (not reg
 Git provenance for a served bundle. Reports the stable or preview lane, write mode, served
 and upstream revisions, branch, dirty state, and reconciliation relationship.
 
-- **MCP:** `sync_status(bundle) -> {bundle,path,lane,write_mode,expected_write_branch?,tracked,served_sha?,upstream_ref?,upstream_sha?,reconciliation?,branch?,dirty?}`
-  (`branch` is null with `detached: true` on a detached-HEAD checkout)
+- **MCP:** `sync_status(bundle) -> object`
+
+<!-- sync-status-base-keys: bundle,path,lane,write_mode,expected_write_branch,git_commit,tracked -->
+<!-- sync-status-git-keys: repo,sha,served_sha,upstream_ref,upstream_sha,reconciliation,branch,detached,dirty -->
+
+Every response contains `bundle`, resolved `path`, `lane`, `write_mode`,
+`expected_write_branch` (string or null), `git_commit` (boolean), and `tracked`. `git_commit` is a
+deprecated compatibility alias for the effective draft-write setting; new consumers use
+`write_mode`. When `tracked` is false, those seven keys are the complete response.
+
+When `tracked` is true, the response always also contains `repo`, `sha`, `served_sha`,
+`upstream_ref`, `upstream_sha`, `reconciliation`, `branch`, `detached`, and `dirty`.
+`served_sha` is the canonical served revision; `sha` is its deprecated compatibility alias and
+has the identical string-or-null value. `repo` is the resolved Git top level and `upstream_ref`
+is the configured remote branch ref. `upstream_sha` is null when that ref cannot resolve.
+`reconciliation` is `in-sync`, `ahead`, `behind`, `diverged`, or `unknown`. `branch` is null and
+`detached` is true for a valid detached HEAD; both can be null when HEAD itself cannot resolve.
+`dirty` is boolean when Git status succeeds and null otherwise.
 
 <!-- desc:start -->
-Report a bundle's authority lane and git reconciliation state: lane, write_mode, expected write branch, served SHA, configured upstream ref and SHA, branch, dirty state, and whether the checkout is in-sync, ahead, behind, or diverged. Returns tracked=false outside a git repository.
+Report a bundle's authority lane and git reconciliation state. Every response includes bundle, path, lane, write_mode, expected_write_branch, the deprecated git_commit compatibility alias, and tracked. A tracked checkout also includes repo, served_sha, its deprecated sha alias, upstream_ref/upstream_sha, reconciliation, branch, detached, and dirty; unavailable Git values are null. Reconciliation is in-sync, ahead, behind, diverged, or unknown. Returns tracked=false with no Git-only keys outside a repository.
 <!-- desc:end -->
 
 ## Build commands (CLI only)

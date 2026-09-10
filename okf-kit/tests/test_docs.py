@@ -8,7 +8,9 @@ guards the wiki as the documentation home.
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -22,6 +24,9 @@ from okf_kit.mcp import (
     _SEARCH_DESC,
     _SYNC_STATUS_DESC,
     _VALIDATE_DESC,
+    BundleRegistry,
+    GitBackend,
+    tool_sync_status,
 )
 
 WIKI = Path(__file__).resolve().parent.parent.parent / "wiki"
@@ -86,6 +91,61 @@ def test_hive_conformance_fixture_contract_is_documented():
     assert "byte-identical" in text
     assert "faf157d80fadb4269807e020ae96c42aba37c6b8cbd959eb0b99c6bc9d3e28cc" in text
     assert "both repositories must\nassert and execute that exact digest" in text
+
+
+def _documented_sync_status_keys(text: str, group: str) -> set[str]:
+    match = re.search(rf"<!-- sync-status-{group}-keys: ([a-z_,]+) -->", text)
+    assert match, f"missing sync_status {group} key contract"
+    return set(match.group(1).split(","))
+
+
+def test_sync_status_documented_keys_match_runtime(tmp_path: Path):
+    git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    tracked_root = tmp_path / "tracked"
+    tracked_root.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tracked_root)], check=True, env=git_env)
+    (tracked_root / "concept.md").write_text("---\ntype: Note\n---\nbody\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tracked_root), "add", "concept.md"], check=True, env=git_env)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tracked_root),
+            "-c",
+            "user.name=docs-test",
+            "-c",
+            "user.email=docs@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+        check=True,
+        env=git_env,
+    )
+    loose_root = tmp_path / "loose"
+    loose_root.mkdir()
+    reg = BundleRegistry({"tracked": tracked_root, "loose": loose_root})
+    backend = GitBackend(reg)
+
+    untracked = tool_sync_status(reg, backend, "loose")
+    tracked = tool_sync_status(reg, backend, "tracked")
+    docs = TOOLS_REFERENCE.read_text(encoding="utf-8")
+    base_keys = _documented_sync_status_keys(docs, "base")
+    git_keys = _documented_sync_status_keys(docs, "git")
+
+    assert set(untracked) == base_keys
+    assert set(tracked) == base_keys | git_keys
+    assert tracked["sha"] == tracked["served_sha"]
+
+    subprocess.run(
+        ["git", "-C", str(tracked_root), "checkout", "-q", "--detach"],
+        check=True,
+        env=git_env,
+    )
+    detached = tool_sync_status(reg, GitBackend(reg), "tracked")
+    assert detached["branch"] is None
+    assert detached["detached"] is True
 
 
 def _extract_description(md: str, tool: str) -> str:

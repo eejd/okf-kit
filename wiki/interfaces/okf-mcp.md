@@ -23,9 +23,14 @@ A `BundleRegistry` maps registered names to resolved root paths and rejects unkn
 `{bundle,concept_id,direction,edges}`; each edge carries source/target OKF URIs, bundle ids,
 concept ids, and `relation`. `validate` returns
 `{conformant,publishable,profile,errors,publication_errors,warnings,info}`. `list_bundles` returns
-`[{bundle,path},...]`. `sync_status` always returns bundle/path/lane/write-mode/expected-branch/
-tracked fields and adds served/upstream revision, reconciliation, branch/detached, and dirty fields
-for a Git checkout. MCP call failures are protocol errors rather than CLI process exit codes.
+`[{bundle,path},...]`. `sync_status` always returns
+`{bundle,path,lane,write_mode,expected_write_branch,git_commit,tracked}`. The `git_commit` boolean
+is a deprecated compatibility alias; consumers use `write_mode`. An untracked response stops
+there. A tracked response always adds
+`{repo,sha,served_sha,upstream_ref,upstream_sha,reconciliation,branch,detached,dirty}`. `sha` is a
+deprecated alias identical to canonical `served_sha`; unavailable revisions/status values are
+null. A valid detached checkout has `branch:null` and `detached:true`. MCP call failures are
+protocol errors rather than CLI process exit codes.
 
 # API
 

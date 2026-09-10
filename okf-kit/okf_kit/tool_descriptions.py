@@ -67,8 +67,10 @@ LIST_BUNDLES_DESC = (
 )
 
 SYNC_STATUS_DESC = (
-    "Report a bundle's authority lane and git reconciliation state: lane, write_mode, expected "
-    "write branch, served SHA, configured upstream ref and SHA, branch, dirty state, and whether "
-    "the checkout is in-sync, ahead, behind, or diverged. Returns tracked=false outside a git "
-    "repository."
+    "Report a bundle's authority lane and git reconciliation state. Every response includes "
+    "bundle, path, lane, write_mode, expected_write_branch, the deprecated git_commit "
+    "compatibility alias, and tracked. A tracked checkout also includes repo, served_sha, its "
+    "deprecated sha alias, upstream_ref/upstream_sha, reconciliation, branch, detached, and "
+    "dirty; unavailable Git values are null. Reconciliation is in-sync, ahead, behind, "
+    "diverged, or unknown. Returns tracked=false with no Git-only keys outside a repository."
 )
