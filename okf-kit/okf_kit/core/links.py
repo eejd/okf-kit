@@ -22,7 +22,7 @@ from okf_kit.core.model import Concept
 
 _LINK_RE = re.compile(r"\]\(([^)\s]+\.md)(?:#[A-Za-z0-9_-]*)?\)")
 _OKF_LINK_RE = re.compile(
-    r"\]\((okf://[^/)]+/concepts/[^)\s#]+\.md)(?:#[A-Za-z0-9_-]*)?\)"
+    r"\]\((okf://.+?/concepts/[^)\s#]+\.md)(?:#[A-Za-z0-9_-]*)?\)"
 )
 _RELATION_KEYS = frozenset(
     {"related", "governs", "implements", "depends-on", "evidence-for", "supersedes"}
@@ -137,10 +137,28 @@ def extract_link_targets(body: str) -> list[str]:
 
 def parse_okf_uri(value: str) -> tuple[str, str] | None:
     """Parse ``okf://BUNDLE/concepts/CID.md`` into its address components."""
-    match = re.fullmatch(r"okf://([^/]+)/concepts/(.+)\.md", value)
-    if match is None or not cid_segments_valid(match.group(2)):
+    match = re.fullmatch(r"okf://(.+?)/concepts/(.+)\.md", value)
+    if match is None:
         return None
-    return match.group(1), match.group(2)
+    bundle, cid = match.groups()
+    if not cid_segments_valid(bundle) or not cid_segments_valid(cid):
+        return None
+    return bundle, cid
+
+
+def _local_relation_target(root: Path, concept: Concept, value: str) -> str | None:
+    """Resolve a local relation value with the same containment rules as Markdown links."""
+    if value.endswith(".md"):
+        resolved = _resolve_target(value, concept.path.parent.resolve(), Path(root).resolve())
+        if not is_within(resolved, Path(root).resolve()):
+            return None
+        try:
+            rel = resolved.relative_to(Path(root).resolve()).as_posix()
+        except ValueError:
+            return None
+        cid = rel.removesuffix(".md")
+        return cid if cid_segments_valid(cid) else None
+    return value if cid_segments_valid(value) else None
 
 
 def concept_graph_edges(root: Path, concept: Concept, bundle: str) -> list[GraphEdge]:
@@ -166,9 +184,9 @@ def concept_graph_edges(root: Path, concept: Concept, bundle: str) -> list[Graph
             if parsed:
                 edges.add(GraphEdge(bundle, concept.cid, relation, parsed[0], parsed[1]))
                 continue
-            target = value.removeprefix("/").removesuffix(".md")
-            if cid_segments_valid(target):
-                edges.add(GraphEdge(bundle, concept.cid, relation, bundle, target))
+            local_target = _local_relation_target(root, concept, value)
+            if local_target is not None:
+                edges.add(GraphEdge(bundle, concept.cid, relation, bundle, local_target))
     return sorted(edges)
 
 

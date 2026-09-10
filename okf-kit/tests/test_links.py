@@ -13,9 +13,11 @@ from okf_kit.core.links import (
     build_adjacency,
     build_backlinks,
     cid_segments_valid,
+    concept_graph_edges,
     concept_outgoing,
     extract_link_targets,
     iter_concept_files,
+    parse_okf_uri,
     resolve_cid_path,
 )
 from okf_kit.core.parse import parse_concept
@@ -187,6 +189,27 @@ def test_broken_links_absolute(tmp_path):
     _write(tmp_path, "a.md", "---\ntype: T\n---\n[ghost](/ghost.md)\n")
     c = parse_concept(tmp_path / "a.md", tmp_path)
     assert broken_links(tmp_path, c) == ["/ghost.md"]
+
+
+def test_typed_relation_resolves_relative_to_source_with_containment(tmp_path):
+    _write(
+        tmp_path, "plans/current.md",
+        "---\ntype: Plan\ndepends-on: ../contracts/api.md\n---\nbody\n",
+    )
+    _write(tmp_path, "contracts/api.md", "---\ntype: Contract\n---\nbody\n")
+    concept = _concept(tmp_path, "plans/current.md")
+    edges = concept_graph_edges(tmp_path, concept, "hive")
+    assert [(edge.relation, edge.target_cid) for edge in edges] == [
+        ("depends-on", "contracts/api")
+    ]
+    concept.frontmatter["depends-on"] = "../../outside.md"
+    assert concept_graph_edges(tmp_path, concept, "hive") == []
+
+
+def test_okf_uri_parses_multi_level_bundle_id():
+    assert parse_okf_uri("okf://portfolio/science/concepts/research/model.md") == (
+        "portfolio/science", "research/model"
+    )
 
 
 def test_iter_concept_files_skips_symlink_escape(tmp_path):

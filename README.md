@@ -221,10 +221,16 @@ the next milestone; this is read-only.
 
 The default stable server is read-only: **`search`**, **`read_concept`**,
 **`graph_links`**, **`validate`**, **`list_bundles`**, and **`sync_status`**.
-Start a review checkout with `--write-mode draft --lane preview` to add
+Start a review checkout with `--write-mode draft --lane preview
+--expected-write-branch <branch>` to add
 **`create_concept`** and **`init_bundle`**; those tools are absent when writes
 are disabled. Every concept also has an `okf://<bundle>/concepts/<id>.md`
 resource.
+
+Search returns the v0.3 cursor-page contract by default. During migration,
+existing list consumers can request `response_version=legacy` (MCP) or
+`--response-version legacy` (CLI); cursors reject reuse with a different query,
+filter set, or bundle revision.
 
 ## Architecture
 
@@ -234,7 +240,7 @@ One pure core, two thin presentation layers (no duplicated logic):
 okf_kit.core  (model · parse · validate · links · search · context · index · templates)
       │
       ├── okf_kit.cli   → `okf` CLI      (argparse: init/new/validate/search/read/index/code)
-      └── okf_kit.mcp   → `okf-mcp`      (FastMCP/stdio: search/read_concept/validate + okf://)
+      └── okf_kit.mcp   → `okf-mcp`      (FastMCP: stable reads + preview draft writes + okf://)
 ```
 
 The core is pure: deterministic, no network, no randomness. **Security:** every

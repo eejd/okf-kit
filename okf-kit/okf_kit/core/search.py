@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import json
 import math
 import re
 from collections import Counter
@@ -147,6 +149,7 @@ class Index:
     docs: list[_Doc] = field(default_factory=list)
     doc_freq: Counter[str] = field(default_factory=Counter)
     avg_length: float = 0.0
+    revision: str = ""
 
     def to_dict(self) -> list[dict[str, Any]]:
         """Serialize index metadata for diagnostics.
@@ -242,7 +245,16 @@ def build_index(root: Path) -> Index:
     for doc in docs:
         doc_freq.update(_doc_terms(doc))
     avg_length = (sum(d.length for d in docs) / len(docs)) if docs else 0.0
-    return Index(docs=docs, doc_freq=doc_freq, avg_length=avg_length)
+    revision_payload = [
+        {"cid": doc.cid, "metadata": doc.metadata, "body": doc.body}
+        for doc in sorted(docs, key=lambda item: item.cid)
+    ]
+    revision = hashlib.sha256(
+        json.dumps(
+            revision_payload, sort_keys=True, separators=(",", ":"), default=str
+        ).encode("utf-8")
+    ).hexdigest()
+    return Index(docs=docs, doc_freq=doc_freq, avg_length=avg_length, revision=revision)
 
 
 def search(
@@ -323,11 +335,14 @@ def search_page(
     """
     if limit < 1:
         raise ValueError("limit must be at least 1")
-    offset = _decode_cursor(cursor)
+    signature = _search_signature(index, q, type, tag, metadata)
+    offset = _decode_cursor(cursor, signature)
     all_hits = search(index, q, type=type, tag=tag, metadata=metadata, limit=len(index.docs))
     page = all_hits[offset:offset + limit]
     next_offset = offset + len(page)
-    next_cursor = _encode_cursor(next_offset) if next_offset < len(all_hits) else None
+    next_cursor = (
+        _encode_cursor(next_offset, signature) if next_offset < len(all_hits) else None
+    )
     return page, len(all_hits), next_cursor
 
 
@@ -338,17 +353,52 @@ def _metadata_matches(actual: Any, expected: Any) -> bool:
     return bool(actual == expected)
 
 
-def _encode_cursor(offset: int) -> str:
-    return base64.urlsafe_b64encode(str(offset).encode("ascii")).decode("ascii").rstrip("=")
+def _search_signature(
+    index: Index,
+    q: str,
+    type_filter: list[str] | None,
+    tag_filter: list[str] | None,
+    metadata: dict[str, Any] | None,
+) -> str:
+    canonical = {
+        "revision": index.revision,
+        "query": q.strip().lower(),
+        "type": sorted(set(type_filter or [])),
+        "tag": sorted(set(tag_filter or [])),
+        "metadata": metadata or {},
+    }
+    return hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
 
 
-def _decode_cursor(cursor: str | None) -> int:
+def _encode_cursor(offset: int, signature: str) -> str:
+    payload = json.dumps(
+        {"v": 1, "offset": offset, "signature": signature},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(cursor: str | None, expected_signature: str) -> int:
     if cursor is None:
         return 0
     try:
         padded = cursor + "=" * (-len(cursor) % 4)
-        offset = int(base64.urlsafe_b64decode(padded.encode("ascii")).decode("ascii"))
-    except (binascii.Error, ValueError, UnicodeError) as exc:
+        payload = json.loads(
+            base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        )
+        if not isinstance(payload, dict) or payload.get("v") != 1:
+            raise ValueError("invalid search cursor")
+        offset = payload.get("offset")
+        if not isinstance(offset, int):
+            raise ValueError("invalid search cursor")
+        if payload.get("signature") != expected_signature:
+            raise ValueError("search cursor does not match query, filters, or bundle revision")
+    except json.JSONDecodeError as exc:
+        raise ValueError("invalid search cursor") from exc
+    except (binascii.Error, UnicodeError) as exc:
         raise ValueError("invalid search cursor") from exc
     if offset < 0:
         raise ValueError("invalid search cursor")

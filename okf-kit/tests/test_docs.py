@@ -8,8 +8,10 @@ guards the wiki as the documentation home.
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 
+from okf_kit import __version__
 from okf_kit.mcp import (
     _CREATE_DESC,
     _GRAPH_DESC,
@@ -34,6 +36,18 @@ def test_reference_concepts_exist():
         "project/backlog.md",
     ):
         assert (WIKI / rel).is_file(), f"missing wiki reference concept: {rel}"
+
+
+def test_package_runtime_version_matches_project_metadata():
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    metadata = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    assert __version__ == metadata["project"]["version"] == "0.3.0"
+
+
+def test_readme_documents_write_guard_and_search_compatibility():
+    readme = (Path(__file__).resolve().parents[2] / "README.md").read_text(encoding="utf-8")
+    assert "--expected-write-branch" in readme
+    assert "response_version=legacy" in readme
 
 
 def _extract_description(md: str, tool: str) -> str:

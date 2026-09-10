@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from okf_kit.core.search import Hit, build_index, search
+import pytest
+from okf_kit.core.search import Hit, build_index, search, search_page
 
 
 def _bundle(tmp_path: Path, files: dict[str, str]) -> None:
@@ -172,3 +173,26 @@ def test_search_single_char_tokens_ignored(tmp_path):
     _bundle(tmp_path, {"a.md": "---\ntype: T\ntitle: I\ndescription: d\n---\nx\n"})
     # A bare "I" query should not match purely on the single-character token.
     assert search(build_index(tmp_path), "i") == []
+
+
+def test_search_cursor_is_bound_to_query_filters_and_revision(tmp_path):
+    _bundle(tmp_path, {
+        "a.md": "---\ntype: T\ntitle: A\ndescription: d\nstatus: stable\n---\ncommon\n",
+        "b.md": "---\ntype: T\ntitle: B\ndescription: d\nstatus: stable\n---\ncommon\n",
+    })
+    index = build_index(tmp_path)
+    _, _, cursor = search_page(index, "common", metadata={"status": "stable"}, limit=1)
+    assert cursor
+    with pytest.raises(ValueError, match="does not match"):
+        search_page(index, "different", metadata={"status": "stable"}, limit=1, cursor=cursor)
+    with pytest.raises(ValueError, match="does not match"):
+        search_page(index, "common", metadata={"status": "draft"}, limit=1, cursor=cursor)
+    (tmp_path / "a.md").write_text(
+        "---\ntype: T\ntitle: Changed\ndescription: d\nstatus: stable\n---\ncommon\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="does not match"):
+        search_page(
+            build_index(tmp_path), "common", metadata={"status": "stable"},
+            limit=1, cursor=cursor,
+        )

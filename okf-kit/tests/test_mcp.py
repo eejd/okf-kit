@@ -46,6 +46,16 @@ def test_tool_search_returns_dicts(tmp_path: Path):
     page = tool_search(reg, "kb", "alpha")
     assert page["results"][0]["cid"] == "a"
     assert page["total"] == 1
+    assert page["schema_version"] == "1"
+
+
+def test_tool_search_legacy_response_preserves_hit_list(tmp_path: Path):
+    reg = BundleRegistry({"kb": _bundle(tmp_path)})
+    hits = tool_search(reg, "kb", "alpha", response_version="legacy")
+    assert isinstance(hits, list)
+    assert hits[0]["cid"] == "a"
+    with pytest.raises(ValueError, match="do not accept a cursor"):
+        tool_search(reg, "kb", "alpha", cursor="opaque", response_version="legacy")
 
 
 def test_tool_read_concept_returns_markdown(tmp_path: Path):
@@ -121,6 +131,16 @@ def test_tool_validate_logs_finding_counts(tmp_path: Path, capsys: pytest.Captur
     assert isinstance(record["n_info"], int)
 
 
+def test_tool_graph_links_logs_to_stderr(tmp_path: Path, capsys: pytest.CaptureFixture):
+    reg = BundleRegistry({"kb": _bundle(tmp_path)})
+    tool_graph_links(reg, "kb", "a")
+    record = _last_log_record(capsys)
+    assert record["tool"] == "graph_links"
+    assert record["ok"] is True
+    assert record["concept_id"] == "a"
+    assert isinstance(record["n_edges"], int)
+
+
 def test_tool_list_bundles_logs_count(tmp_path: Path, capsys: pytest.CaptureFixture):
     reg = BundleRegistry({"kb": _bundle(tmp_path)})
     tool_list_bundles(reg)
@@ -183,7 +203,10 @@ def test_parse_bundle_arg_rejects_empty_name_or_path():
 
 
 def test_make_server_publishes_argument_metadata_and_annotations(tmp_path: Path):
-    server = make_server({"kb": _bundle(tmp_path)}, write_mode="draft", lane="preview")
+    server = make_server(
+        {"kb": _bundle(tmp_path)}, write_mode="draft", lane="preview",
+        expected_write_branch="preview",
+    )
     tools = {t.name: t for t in asyncio.run(server.list_tools())}
 
     search_schema = tools["search"].inputSchema
@@ -214,6 +237,11 @@ def test_make_server_draft_requires_preview_lane(tmp_path: Path):
         make_server({"kb": _bundle(tmp_path)}, write_mode="draft")
 
 
+def test_make_server_draft_requires_explicit_expected_branch(tmp_path: Path):
+    with pytest.raises(ValueError, match="expected_write_branch"):
+        make_server({"kb": _bundle(tmp_path)}, write_mode="draft", lane="preview")
+
+
 def test_tool_search_paginates_and_filters_exact_metadata(tmp_path: Path):
     root = _bundle(tmp_path)
     for name, status in (("b", "stable"), ("c", "stable"), ("d", "draft")):
@@ -224,7 +252,11 @@ def test_tool_search_paginates_and_filters_exact_metadata(tmp_path: Path):
     reg = BundleRegistry({"kb": root})
     first = tool_search(reg, "kb", "common", limit=1, metadata={"status": "stable", "applicability": "v1"})
     assert first["total"] == 2 and first["next_cursor"]
-    second = tool_search(reg, "kb", "common", limit=1, metadata={"status": "stable"}, cursor=first["next_cursor"])
+    second = tool_search(
+        reg, "kb", "common", limit=1,
+        metadata={"status": "stable", "applicability": "v1"},
+        cursor=first["next_cursor"],
+    )
     assert first["results"][0]["cid"] != second["results"][0]["cid"]
 
 
@@ -251,6 +283,12 @@ def test_make_server_registers_okf_resources(tmp_path: Path):
     uris = {str(r.uri) for r in resources}
     assert "okf://kb/concepts/a.md" in uris
     assert "okf://kb/concepts/tables/users.md" in uris
+
+
+def test_make_server_registers_multi_level_bundle_id_resources(tmp_path: Path):
+    server = make_server({"portfolio/science": _bundle(tmp_path)})
+    resources = asyncio.run(server.list_resources())
+    assert "okf://portfolio/science/concepts/a.md" in {str(item.uri) for item in resources}
 
 
 # --- create_concept (richness floor) + init_bundle -------------------------
@@ -377,10 +415,12 @@ def test_main_passes_authority_lane_configuration(tmp_path: Path, monkeypatch: p
     monkeypatch.setattr(mcp_mod, "make_server", _spy)
     mcp_mod.main([
         str(tmp_path), "--write-mode", "draft", "--lane", "preview",
+        "--expected-write-branch", "preview",
         "--upstream-ref", "origin/main", "--publication-profile", "hive",
     ])
     assert seen["write_mode"] == "draft"
     assert seen["lane"] == "preview"
+    assert seen["expected_write_branch"] == "preview"
     assert seen["upstream_ref"] == "origin/main"
     assert seen["publication_profile"] == "hive"
 

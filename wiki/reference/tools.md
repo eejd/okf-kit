@@ -9,17 +9,17 @@ description: Canonical reference for the okf CLI and okf-mcp server — each too
 
 Canonical reference for the `okf` CLI and the `okf-mcp` server. Each tool's **canonical description** — the agent trigger surface — lives in a `<!-- desc:start -->` … `<!-- desc:end -->` block below; the test suite asserts these match the strings embedded in [okf-mcp](/interfaces/okf-mcp.md), so this page and the server never drift (see [Tool doc sync](/conventions/tool-doc-sync.md)).
 
-Most commands operate on a *bundle* — a directory of OKF `.md` concept files. Read-only servers expose `search`, `read_concept`, `graph_links`, `validate`, `list_bundles`, and `sync_status`. Preview servers started with `--write-mode draft --lane preview` additionally expose `create_concept` and `init_bundle`.
+Most commands operate on a *bundle* — a directory of OKF `.md` concept files. Read-only servers expose `search`, `read_concept`, `graph_links`, `validate`, `list_bundles`, and `sync_status`. Preview servers started with `--write-mode draft --lane preview --expected-write-branch <branch>` additionally expose `create_concept` and `init_bundle`.
 
 ## search
 
 Full-text discovery. Ranked hits (exact title > frontmatter > body) with a snippet. Cheap: ids + snippets, no full bodies — the first step of progressive context.
 
-- **CLI:** `okf search <bundle> <query> [--type T --tag T --metadata KEY=JSON --limit N --cursor C] [--json]`
-- **MCP:** `search(bundle, query, type[]?, tag[]?, metadata?, limit?, cursor?) -> {results,total,next_cursor}`
+- **CLI:** `okf search <bundle> <query> [--type T --tag T --metadata KEY=JSON --limit N --cursor C --response-version v1|legacy] [--json]`
+- **MCP:** `search(bundle, query, type[]?, tag[]?, metadata?, limit?, cursor?, response_version='v1') -> {schema_version,results,total,next_cursor}`
 
 <!-- desc:start -->
-Discover OKF concepts without loading full bodies. Searches title, description, body, tags, and type, then returns ranked hits with cid/title/type/snippet/score. Use this before read_concept when you do not already know the concept id, and narrow with type[], tag[], or exact metadata facets when the bundle is large. Returns a page with results, total, and an opaque next_cursor. Empty query lists concepts after filters. Example: search(bundle='analytics', query='customer churn', type=['Metric','Table']).
+Discover OKF concepts without loading full bodies. Searches title, description, body, tags, and type, then returns ranked hits with cid/title/type/snippet/score. Use this before read_concept when you do not already know the concept id, and narrow with type[], tag[], or exact metadata facets when the bundle is large. Returns a page with schema_version, results, total, and an opaque next_cursor bound to the query, filters, and bundle revision. Set response_version='legacy' while migrating pre-0.3 list clients. Empty query lists concepts after filters. Example: search(bundle='analytics', query='customer churn', type=['Metric','Table']).
 <!-- desc:end -->
 
 ## read_concept
@@ -40,7 +40,7 @@ Return relation metadata without loading bodies.
 - **MCP:** `graph_links(bundle, concept_id, direction='both', relation[]?) -> {bundle,concept_id,direction,edges}`
 
 <!-- desc:start -->
-Traverse graph edges without loading concept bodies. Returns typed incoming, outgoing, or bidirectional edges for one concept, including cross-bundle okf:// relations when the target bundle is registered. Filter by relation when only governs, implements, depends-on, evidence-for, supersedes, related, or ordinary Markdown links matter.
+Traverse graph edges without loading concept bodies. Returns typed incoming, outgoing, or bidirectional edges for one concept, including cross-bundle okf:// relations when the target bundle, including a multi-level bundle id, is registered. Filter by relation when only governs, implements, depends-on, evidence-for, supersedes, related, or ordinary Markdown links matter.
 <!-- desc:end -->
 
 ## validate
@@ -62,7 +62,7 @@ Create a concept **via MCP**. Unlike the CLI's `okf new` (a thin stub), it enfor
 - Containment + atomic exclusive create are inherited from `core/templates.create_concept`.
 
 <!-- desc:start -->
-Create one substantive OKF concept. Use after searching/reading nearby concepts so the new page is specific, linked, and non-duplicative. The body must be >=120 words and include at least one depth heading: # Overview, # Definition, # Schema, # Endpoints, # API, # Steps, # Examples, or # Citations. Write concrete Markdown with relevant headings, examples, caveats, and bundle-relative links such as [Users](/tables/users.md); do not create placeholders or generic filler. Returns the created cid and path; rejects thin bodies, invalid ids, path escapes, and existing files.
+Create one substantive draft OKF concept on the configured preview branch. The server verifies its expected branch before writing and again before commit/push, controls status and generated provenance, and rejects caller-supplied verified/trust fields. Use after searching/reading nearby concepts so the new page is specific, linked, and non-duplicative. The body must be >=120 words and include at least one depth heading: # Overview, # Definition, # Schema, # Endpoints, # API, # Steps, # Examples, or # Citations. Write concrete Markdown with relevant headings, examples, caveats, and bundle-relative links such as [Users](/tables/users.md); do not create placeholders or generic filler. Returns the created cid and path; rejects thin bodies, invalid ids, path escapes, and existing files.
 <!-- desc:end -->
 
 ## init_bundle
@@ -72,7 +72,7 @@ Initialize (or re-initialize) a bundle root via MCP — writes `index.md` with `
 - **MCP:** `init_bundle(bundle, okf_version='0.2') -> {initialized, path}`
 
 <!-- desc:start -->
-Initialize a registered OKF bundle root by writing root index.md with okf_version. Creates the directory if needed and rewrites index.md if it already exists, so use it before authoring a new bundle or when intentionally resetting the root index metadata. Example: init_bundle(bundle='wiki').
+Initialize a registered OKF bundle root in the preview lane by writing root index.md with okf_version after verifying the expected write branch. Creates the directory if needed and rewrites index.md if it already exists, so use it before authoring a new bundle or when intentionally resetting the root index metadata. Example: init_bundle(bundle='wiki').
 <!-- desc:end -->
 
 ## list_bundles
@@ -95,11 +95,11 @@ List every bundle name registered on this server, alphabetically sorted (not reg
 Git provenance for a served bundle. Reports the stable or preview lane, write mode, served
 and upstream revisions, branch, dirty state, and reconciliation relationship.
 
-- **MCP:** `sync_status(bundle) -> {bundle,path,lane,write_mode,tracked,served_sha?,upstream_ref?,upstream_sha?,reconciliation?,branch?,dirty?}`
+- **MCP:** `sync_status(bundle) -> {bundle,path,lane,write_mode,expected_write_branch?,tracked,served_sha?,upstream_ref?,upstream_sha?,reconciliation?,branch?,dirty?}`
   (`branch` is null with `detached: true` on a detached-HEAD checkout)
 
 <!-- desc:start -->
-Report a bundle's authority lane and git reconciliation state: lane, write_mode, served SHA, configured upstream ref and SHA, branch, dirty state, and whether the checkout is in-sync, ahead, behind, or diverged. Returns tracked=false outside a git repository.
+Report a bundle's authority lane and git reconciliation state: lane, write_mode, expected write branch, served SHA, configured upstream ref and SHA, branch, dirty state, and whether the checkout is in-sync, ahead, behind, or diverged. Returns tracked=false outside a git repository.
 <!-- desc:end -->
 
 ## Build commands (CLI only)

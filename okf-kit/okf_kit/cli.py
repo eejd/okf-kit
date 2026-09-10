@@ -17,6 +17,7 @@ from okf_kit.core.index import regenerate_indexes
 from okf_kit.core.search import build_index, search_page
 from okf_kit.core.templates import TEMPLATE_TYPES, create_concept, init_bundle
 from okf_kit.core.validate import Report, validate_bundle
+from okf_kit.tool_descriptions import READ_DESC, SEARCH_DESC, VALIDATE_DESC
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -63,7 +64,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_new.add_argument("--desc")
     p_new.add_argument("--tag", action="append", default=[])
 
-    p_val = sub.add_parser("validate", help="Validate OKF v0.2 conformance (SPEC §11).")
+    p_val = sub.add_parser(
+        "validate", help="Validate OKF v0.2 conformance (SPEC §11).",
+        description=VALIDATE_DESC,
+    )
     p_val.add_argument("bundle")
     p_val.add_argument("--json", action="store_true", help="Emit a JSON report.")
     p_val.add_argument(
@@ -72,7 +76,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Apply a publication profile separately from OKF conformance.",
     )
 
-    p_search = sub.add_parser("search", help="Full-text search across the bundle.")
+    p_search = sub.add_parser(
+        "search", help="Full-text search across the bundle.", description=SEARCH_DESC
+    )
     p_search.add_argument("bundle")
     p_search.add_argument("query")
     p_search.add_argument("--type", action="append", default=[])
@@ -80,13 +86,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_search.add_argument("--limit", type=int, default=20)
     p_search.add_argument("--cursor")
     p_search.add_argument(
+        "--response-version", choices=("v1", "legacy"), default="v1",
+        help="JSON response contract; legacy emits the pre-0.3 hit list.",
+    )
+    p_search.add_argument(
         "--metadata", action="append", default=[], metavar="KEY=JSON",
         help="Exact frontmatter filter; repeat for multiple facets.",
     )
     p_search.add_argument("--json", action="store_true")
 
     p_read = sub.add_parser(
-        "read", help="Read a concept; use --depth for progressive context (neighborhood)."
+        "read", help="Read a concept; use --depth for progressive context (neighborhood).",
+        description=READ_DESC,
     )
     p_read.add_argument("bundle")
     p_read.add_argument("concept_id")
@@ -245,6 +256,8 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 
 def _cmd_search(args: argparse.Namespace) -> int:
+    if args.response_version == "legacy" and args.cursor:
+        raise ValueError("legacy search responses do not accept a cursor")
     index = build_index(Path(args.bundle))
     metadata = _parse_metadata_filters(args.metadata)
     hits, total, next_cursor = search_page(
@@ -257,13 +270,16 @@ def _cmd_search(args: argparse.Namespace) -> int:
         cursor=args.cursor,
     )
     if args.json:
-        print(
-            json.dumps(
-                {"results": [_hit_dict(h) for h in hits], "total": total,
-                 "next_cursor": next_cursor},
-                indent=2,
-            )
-        )
+        results = [_hit_dict(h) for h in hits]
+        payload: Any
+        if args.response_version == "legacy":
+            payload = results
+        else:
+            payload = {
+                "schema_version": "1", "results": results, "total": total,
+                "next_cursor": next_cursor,
+            }
+        print(json.dumps(payload, indent=2))
     else:
         _print_hits(hits)
     return 0

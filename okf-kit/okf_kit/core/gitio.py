@@ -122,15 +122,41 @@ class GitWriter:
         ``None``, which callers treat as "git mode requested but not
         available for this bundle" — a logged warning, not an error.
         """
-        probe = cls(Path(bundle_root), push=push)
+        bundle = Path(bundle_root).resolve()
+        probe_root = bundle
+        while not probe_root.exists() and probe_root != probe_root.parent:
+            probe_root = probe_root.parent
+        probe = cls(probe_root, push=push)
         result = probe._git("rev-parse", "--show-toplevel")
         if not result.ok or not result.stdout:
             return None
-        return cls(Path(result.stdout), push=push)
+        repo_root = Path(result.stdout).resolve()
+        try:
+            bundle.relative_to(repo_root)
+        except ValueError:
+            return None
+        return cls(repo_root, push=push)
 
     # -- operations -------------------------------------------------------
 
-    def commit_and_push(self, paths: list[Path], message: str) -> dict[str, Any]:
+    def require_branch(self, expected_branch: str) -> None:
+        """Raise unless this checkout is attached to ``expected_branch``."""
+        branch = self._git("symbolic-ref", "--short", "HEAD")
+        if not branch.ok:
+            raise ValueError("draft writes require an attached git branch")
+        if branch.stdout != expected_branch:
+            raise ValueError(
+                f"draft write branch mismatch: expected {expected_branch!r}, "
+                f"found {branch.stdout!r}"
+            )
+
+    def commit_and_push(
+        self,
+        paths: list[Path],
+        message: str,
+        *,
+        expected_branch: str | None = None,
+    ) -> dict[str, Any]:
         """``git add`` the paths, commit, and (optionally) push to the remote.
 
         Returns a structured dict — ``{committed, sha?, pushed, detail?}`` —
@@ -138,6 +164,12 @@ class GitWriter:
         identical index.md) reports ``committed: false`` with detail
         ``"nothing to commit"``; that is a no-op, not a failure.
         """
+        if expected_branch is not None:
+            try:
+                self.require_branch(expected_branch)
+            except ValueError as exc:
+                return {"committed": False, "pushed": False, "detail": str(exc)}
+
         rels: list[str] = []
         outside: list[str] = []
         for path in paths:

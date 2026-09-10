@@ -14,7 +14,7 @@ description: One pure Python core, two thin presentation layers (CLI + MCP), no 
 okf_kit.core  (model · parse · validate · links · search · context · index · templates)
       │
       ├── okf_kit.cli   → `okf` CLI      (argparse: init/new/validate/search/read/index/serve)
-      └── okf_kit.mcp   → `okf-mcp`      (FastMCP/stdio: search/read_concept/validate + create_concept/init_bundle)
+      └── okf_kit.mcp   → `okf-mcp`      (FastMCP: stable reads + preview draft writes)
 ```
 
 The core is **pure**: deterministic, no network, no randomness, 100% unit-tested. That purity is what makes the two presentation layers trivially thin and lets a third consumer (the web UI) reuse the exact same calls.

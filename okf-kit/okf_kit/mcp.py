@@ -1,9 +1,8 @@
 """The ``okf-mcp`` server (FastMCP, transport-agnostic).
 
-Exposes an OKF bundle to MCP clients (Claude Code, any MCP client) as six
-tools — ``search``, ``read_concept``, ``validate``, ``create_concept``,
-``init_bundle``, ``list_bundles`` — plus an ``okf://<bundle>/concepts/<cid>.md``
-resource per concept. Tools are thin wrappers over :mod:`okf_kit.core`.
+Exposes OKF bundles to MCP clients with stable read tools, preview-only draft
+write tools, and one ``okf://<bundle>/concepts/<cid>.md`` resource per concept.
+Tools are thin wrappers over :mod:`okf_kit.core`.
 
 Bundle registration: each CLI positional argument is either a bare path
 (registered under its directory basename, the original behavior — e.g. a
@@ -48,6 +47,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+from okf_kit import tool_descriptions
 from okf_kit.core import context as context_mod
 from okf_kit.core.gitio import GitWriter
 from okf_kit.core.links import GraphEdge, concept_graph_edges, iter_concept_files, resolve_cid_path
@@ -56,73 +56,14 @@ from okf_kit.core.search import Hit, build_index, search_page
 from okf_kit.core.templates import create_concept, init_bundle
 from okf_kit.core.validate import validate_bundle
 
-_SEARCH_DESC = (
-    "Discover OKF concepts without loading full bodies. Searches title, description, body, "
-    "tags, and type, then returns ranked hits with cid/title/type/snippet/score. Use this "
-    "before read_concept when you do not already know the concept id, and narrow with "
-    "type[], tag[], or exact metadata facets when the bundle is large. Returns a page with "
-    "results, total, and an opaque next_cursor. Empty query lists concepts after filters. "
-    "Example: search(bundle='analytics', query='customer churn', type=['Metric','Table'])."
-)
-
-_READ_DESC = (
-    "Read a concept by id, or progressively load its linked neighborhood. depth=0 returns "
-    "only that concept's raw frontmatter plus Markdown body. depth=1..N returns the seed in "
-    "full plus neighbors in the selected outgoing, incoming, or both direction in deterministic "
-    "BFS order within token_budget; a "
-    "trailing marker names omitted neighbors. Start at depth=0, then increase depth only when "
-    "the answer needs surrounding context. Example: read_concept(bundle='analytics', "
-    "concept_id='metrics/churn', depth=1)."
-)
-
-_VALIDATE_DESC = (
-    "Validate an OKF bundle against v0.2 conformance (SPEC §11). Returns "
-    "{conformant, publishable, errors, publication_errors, warnings, info}. Generic OKF "
-    "conformance stays permissive; an optional server publication profile adds publishability "
-    "checks without changing conformance. Errors such as missing frontmatter, invalid "
-    "frontmatter, or empty type block conformance. Warnings such as missing title/description, "
-    "invalid cids, and broken links are non-blocking. Info includes extension keys, nested "
-    "sub-bundle markers, okf_version state, and empty bundles. Use after authoring and before "
-    "publishing or CI. Example: validate(bundle='analytics')."
-)
-
-_GRAPH_DESC = (
-    "Traverse graph edges without loading concept bodies. Returns typed incoming, outgoing, "
-    "or bidirectional edges for one concept, including cross-bundle okf:// relations when the "
-    "target bundle is registered. Filter by relation when only governs, implements, depends-on, "
-    "evidence-for, supersedes, related, or ordinary Markdown links matter."
-)
-
-_CREATE_DESC = (
-    "Create one substantive OKF concept. Use after searching/reading nearby concepts so the "
-    "new page is specific, linked, and non-duplicative. The body must be >=120 words and "
-    "include at least one depth heading: # Overview, # Definition, # Schema, # Endpoints, "
-    "# API, # Steps, # Examples, or # Citations. Write concrete Markdown with relevant "
-    "headings, examples, caveats, and bundle-relative links such as [Users](/tables/users.md); "
-    "do not create placeholders or generic filler. Returns the created cid and path; rejects "
-    "thin bodies, invalid ids, path escapes, and existing files."
-)
-
-_INIT_DESC = (
-    "Initialize a registered OKF bundle root by writing root index.md with okf_version. "
-    "Creates the directory if needed and rewrites index.md if it already exists, so use it "
-    "before authoring a new bundle or when intentionally resetting the root index metadata. "
-    "Example: init_bundle(bundle='wiki')."
-)
-
-_LIST_BUNDLES_DESC = (
-    "List every bundle name registered on this server, alphabetically sorted (not "
-    "registration order), the only valid values for the 'bundle' argument every other tool "
-    "requires. Call this first if you don't already know the registered name — it is not "
-    "always the same as the corpus's conceptual name (e.g. a server may register a bundle as "
-    "'bundle' if that is its mount directory's basename). Example: list_bundles()."
-)
-
-_SYNC_STATUS_DESC = (
-    "Report a bundle's authority lane and git reconciliation state: lane, write_mode, served "
-    "SHA, configured upstream ref and SHA, branch, dirty state, and whether the checkout is "
-    "in-sync, ahead, behind, or diverged. Returns tracked=false outside a git repository."
-)
+_CREATE_DESC = tool_descriptions.CREATE_DESC
+_GRAPH_DESC = tool_descriptions.GRAPH_DESC
+_INIT_DESC = tool_descriptions.INIT_DESC
+_LIST_BUNDLES_DESC = tool_descriptions.LIST_BUNDLES_DESC
+_READ_DESC = tool_descriptions.READ_DESC
+_SEARCH_DESC = tool_descriptions.SEARCH_DESC
+_SYNC_STATUS_DESC = tool_descriptions.SYNC_STATUS_DESC
+_VALIDATE_DESC = tool_descriptions.VALIDATE_DESC
 
 BundleName = Annotated[
     str,
@@ -167,6 +108,15 @@ MetadataFilter = Annotated[
 SearchCursor = Annotated[
     str | None,
     Field(description="Opaque next_cursor returned by an earlier search page."),
+]
+SearchResponseVersion = Annotated[
+    str,
+    Field(
+        pattern=r"^(v1|legacy)$",
+        description=(
+            "Response contract: v1 returns a cursor page; legacy returns the pre-0.3 hit list."
+        ),
+    ),
 ]
 Direction = Annotated[
     str,
@@ -344,7 +294,7 @@ class BundleRegistry:
 
 
 class GitBackend:
-    """Per-bundle :class:`GitWriter` cache for the ``--git-commit`` write path.
+    """Per-bundle :class:`GitWriter` cache for the draft write path.
 
     Discovery (``git rev-parse --show-toplevel`` from the bundle root) runs
     once per bundle, lazily, so a server whose bundles live outside any git
@@ -361,6 +311,14 @@ class GitBackend:
             self._writers[bundle] = GitWriter.discover(self._reg.get(bundle))
         return self._writers[bundle]
 
+    def require_branch(self, bundle: str, expected_branch: str) -> GitWriter:
+        """Verify the configured review branch before any filesystem mutation."""
+        writer = self.writer_for(bundle)
+        if writer is None:
+            raise ValueError("draft writes require a git-tracked bundle")
+        writer.require_branch(expected_branch)
+        return writer
+
 
 def tool_search(
     reg: BundleRegistry,
@@ -371,18 +329,27 @@ def tool_search(
     limit: SearchLimit = 20,
     metadata: MetadataFilter = None,
     cursor: SearchCursor = None,
-) -> dict[str, Any]:
+    response_version: SearchResponseVersion = "v1",
+) -> dict[str, Any] | list[dict[str, Any]]:
     started_at = time.monotonic()
     ok = False
     hits: list[Hit] = []
     try:
+        if response_version not in {"v1", "legacy"}:
+            raise ValueError("response_version must be v1 or legacy")
+        if response_version == "legacy" and cursor is not None:
+            raise ValueError("legacy search responses do not accept a cursor")
         index = build_index(reg.get(bundle))
         hits, total, next_cursor = search_page(
             index, query, type=type, tag=tag, metadata=metadata, limit=limit, cursor=cursor
         )
         ok = True
+        results = [_hit_dict(h) for h in hits]
+        if response_version == "legacy":
+            return results
         return {
-            "results": [_hit_dict(h) for h in hits],
+            "schema_version": "1",
+            "results": results,
             "total": total,
             "next_cursor": next_cursor,
         }
@@ -428,35 +395,47 @@ def tool_graph_links(
     relation: RelationFilter = None,
 ) -> dict[str, Any]:
     """Return typed graph edges touching one concept across registered bundles."""
-    if direction not in {"outgoing", "incoming", "both"}:
-        raise ValueError("direction must be outgoing, incoming, or both")
-    if resolve_cid_path(reg.get(bundle), concept_id) is None:
-        raise context_mod.ConceptNotFound(concept_id, [])
-    allowed = set(relation) if relation else None
+    started_at = time.monotonic()
+    ok = False
     selected: set[GraphEdge] = set()
-    registered = set(reg.names())
-    for source_bundle in reg.names():
-        root = reg.get(source_bundle)
-        for md in iter_concept_files(root):
-            concept = parse_concept(md, root)
-            if concept.reserved is not None:
-                continue
-            for edge in concept_graph_edges(root, concept, source_bundle):
-                if (
-                    edge.target_bundle not in registered
-                    or resolve_cid_path(reg.get(edge.target_bundle), edge.target_cid) is None
-                ):
+    try:
+        if direction not in {"outgoing", "incoming", "both"}:
+            raise ValueError("direction must be outgoing, incoming, or both")
+        if resolve_cid_path(reg.get(bundle), concept_id) is None:
+            raise context_mod.ConceptNotFound(concept_id, [])
+        allowed = set(relation) if relation else None
+        registered = set(reg.names())
+        for source_bundle in reg.names():
+            root = reg.get(source_bundle)
+            for md in iter_concept_files(root):
+                concept = parse_concept(md, root)
+                if concept.reserved is not None:
                     continue
-                outgoing = edge.source_bundle == bundle and edge.source_cid == concept_id
-                incoming = edge.target_bundle == bundle and edge.target_cid == concept_id
-                touches = (
-                    (direction in {"outgoing", "both"} and outgoing)
-                    or (direction in {"incoming", "both"} and incoming)
-                )
-                if touches and (allowed is None or edge.relation in allowed):
-                    selected.add(edge)
-    edges = [edge.to_dict() for edge in sorted(selected)]
-    return {"bundle": bundle, "concept_id": concept_id, "direction": direction, "edges": edges}
+                for edge in concept_graph_edges(root, concept, source_bundle):
+                    if (
+                        edge.target_bundle not in registered
+                        or resolve_cid_path(reg.get(edge.target_bundle), edge.target_cid) is None
+                    ):
+                        continue
+                    outgoing = edge.source_bundle == bundle and edge.source_cid == concept_id
+                    incoming = edge.target_bundle == bundle and edge.target_cid == concept_id
+                    touches = (
+                        (direction in {"outgoing", "both"} and outgoing)
+                        or (direction in {"incoming", "both"} and incoming)
+                    )
+                    if touches and (allowed is None or edge.relation in allowed):
+                        selected.add(edge)
+        edges = [edge.to_dict() for edge in sorted(selected)]
+        ok = True
+        return {
+            "bundle": bundle, "concept_id": concept_id,
+            "direction": direction, "edges": edges,
+        }
+    finally:
+        _log_tool_call(
+            "graph_links", started_at, ok, bundle=bundle, concept_id=concept_id,
+            direction=direction, n_edges=len(selected),
+        )
 
 
 def tool_validate(
@@ -505,7 +484,12 @@ def _check_richness(body: str) -> None:
 
 
 def _git_commit_result(
-    git: GitBackend | None, bundle: str, paths: list[Path], message: str
+    git: GitBackend | None,
+    bundle: str,
+    paths: list[Path],
+    message: str,
+    *,
+    expected_branch: str | None = None,
 ) -> dict[str, Any] | None:
     """Commit-and-push for a completed write, or ``None`` when git mode is off.
 
@@ -523,7 +507,7 @@ def _git_commit_result(
             "pushed": False,
             "detail": "bundle is not inside a git repository (or git is unavailable)",
         }
-    return writer.commit_and_push(paths, message)
+    return writer.commit_and_push(paths, message, expected_branch=expected_branch)
 
 
 def tool_create_concept(
@@ -539,6 +523,7 @@ def tool_create_concept(
     timestamp: Timestamp = None,
     extra: ExtraFrontmatter = None,
     git: GitBackend | None = None,
+    expected_branch: str | None = None,
 ) -> dict[str, Any]:
     """Create a concept via MCP, enforcing the richness floor.
 
@@ -556,6 +541,10 @@ def tool_create_concept(
     ok = False
     git_outcome: dict[str, Any] | None = None
     try:
+        if git is not None:
+            if expected_branch is None:
+                raise ValueError("draft writes require an explicit expected branch")
+            git.require_branch(bundle, expected_branch)
         _check_richness(body)
         extra_fm: dict[str, Any] = dict(extra) if extra else {}
         if resource is not None:
@@ -565,11 +554,17 @@ def tool_create_concept(
         if git is not None:
             # Provenance for the post-hoc review workflow: MCP-authored
             # concepts stay draft until a human flips status + adds verified.
-            extra_fm.setdefault("status", "draft")
-            extra_fm.setdefault(
-                "generated",
-                {"by": "process:okf-mcp", "at": datetime.now(UTC).isoformat()},
-            )
+            forbidden = {"verified", "trust"} & extra_fm.keys()
+            if forbidden:
+                raise ValueError(
+                    "draft authoring rejects caller trust fields: "
+                    + ", ".join(sorted(forbidden))
+                )
+            extra_fm["status"] = "draft"
+            extra_fm["generated"] = {
+                "by": "process:okf-mcp",
+                "at": datetime.now(UTC).isoformat(),
+            }
         path = create_concept(
             reg.get(bundle),
             cid,
@@ -582,7 +577,10 @@ def tool_create_concept(
         )
         ok = True
         result: dict[str, Any] = {"created": True, "cid": cid, "path": str(path)}
-        git_outcome = _git_commit_result(git, bundle, [path], f"okf-mcp: create concept {cid}")
+        git_outcome = _git_commit_result(
+            git, bundle, [path], f"okf-mcp: create concept {cid}",
+            expected_branch=expected_branch,
+        )
         if git_outcome is not None:
             result["git"] = git_outcome
         return result
@@ -604,16 +602,24 @@ def tool_init_bundle(
     bundle: BundleName,
     okf_version: OkfVersion = "0.2",
     git: GitBackend | None = None,
+    expected_branch: str | None = None,
 ) -> dict[str, Any]:
     """Initialize a bundle root via MCP (idempotent)."""
     started_at = time.monotonic()
     ok = False
     git_outcome: dict[str, Any] | None = None
     try:
+        if git is not None:
+            if expected_branch is None:
+                raise ValueError("draft writes require an explicit expected branch")
+            git.require_branch(bundle, expected_branch)
         path = init_bundle(reg.get(bundle), okf_version=okf_version)
         ok = True
         result: dict[str, Any] = {"initialized": True, "path": str(path)}
-        git_outcome = _git_commit_result(git, bundle, [path], f"okf-mcp: init bundle {bundle}")
+        git_outcome = _git_commit_result(
+            git, bundle, [path], f"okf-mcp: init bundle {bundle}",
+            expected_branch=expected_branch,
+        )
         if git_outcome is not None:
             result["git"] = git_outcome
         return result
@@ -637,6 +643,7 @@ def tool_sync_status(
     write_mode: str = "disabled",
     lane: str = "stable",
     upstream_ref: str = "origin/main",
+    expected_write_branch: str | None = None,
     git_commit: bool | None = None,
 ) -> dict[str, Any]:
     """Report a bundle's git provenance (sha/branch/dirty) for staleness checks."""
@@ -654,6 +661,7 @@ def tool_sync_status(
             "path": str(path),
             "lane": lane,
             "write_mode": write_mode,
+            "expected_write_branch": expected_write_branch,
             "git_commit": write_mode == "draft" if git_commit is None else git_commit,
             "tracked": writer is not None,
         }
@@ -685,6 +693,7 @@ def make_server(
     port: int = 4020,
     write_mode: str = "disabled",
     lane: str = "stable",
+    expected_write_branch: str | None = None,
     upstream_ref: str = "origin/main",
     publication_profile: str | None = None,
     git_commit: bool | None = None,
@@ -704,6 +713,7 @@ def make_server(
         write_mode: ``disabled`` omits mutators; ``draft`` exposes them and
               commits successful writes from a preview checkout.
         lane: Authority lane reported by ``sync_status``. Draft mode requires preview.
+        expected_write_branch: Required in draft mode and verified twice per write.
         upstream_ref: Ref compared with the served checkout for reconciliation.
         publication_profile: Optional governed-publication validation dialect.
         git_commit: Deprecated compatibility alias for draft/preview mode.
@@ -720,6 +730,8 @@ def make_server(
             lane = "preview"
     if write_mode == "draft" and lane != "preview":
         raise ValueError("draft write mode requires the preview lane")
+    if write_mode == "draft" and not expected_write_branch:
+        raise ValueError("draft write mode requires expected_write_branch")
     reg = BundleRegistry(bundles)
     git = GitBackend(reg)
     write_git = git if write_mode == "draft" else None
@@ -739,8 +751,11 @@ def make_server(
         limit: SearchLimit = 20,
         metadata: MetadataFilter = None,
         cursor: SearchCursor = None,
-    ) -> dict[str, Any]:
-        return tool_search(reg, bundle, query, type, tag, limit, metadata, cursor)
+        response_version: SearchResponseVersion = "v1",
+    ) -> dict[str, Any] | list[dict[str, Any]]:
+        return tool_search(
+            reg, bundle, query, type, tag, limit, metadata, cursor, response_version
+        )
 
     @server.tool(
         name="read_concept",
@@ -805,10 +820,14 @@ def make_server(
             timestamp,
             extra,
             git=write_git,
+            expected_branch=expected_write_branch,
         )
 
     def _init_bundle(bundle: BundleName, okf_version: OkfVersion = "0.2") -> dict[str, Any]:
-        return tool_init_bundle(reg, bundle, okf_version, git=write_git)
+        return tool_init_bundle(
+            reg, bundle, okf_version, git=write_git,
+            expected_branch=expected_write_branch,
+        )
 
     if write_mode == "draft":
         server.tool(
@@ -848,7 +867,8 @@ def make_server(
     def _sync_status(bundle: BundleName) -> dict[str, Any]:
         return tool_sync_status(
             reg, git, bundle, write_mode=write_mode, lane=lane,
-            upstream_ref=upstream_ref, git_commit=git_commit,
+            upstream_ref=upstream_ref, expected_write_branch=expected_write_branch,
+            git_commit=git_commit,
         )
 
     _register_resources(server, reg)
@@ -969,6 +989,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Authority lane reported by sync_status; draft writes require preview.",
     )
     parser.add_argument(
+        "--expected-write-branch",
+        help="Required with draft mode; every write verifies this branch before mutation.",
+    )
+    parser.add_argument(
         "--upstream-ref", default="origin/main",
         help="Git ref used to reconcile the served revision (default origin/main).",
     )
@@ -980,7 +1004,8 @@ def main(argv: list[str] | None = None) -> int:
         "--git-commit",
         action="store_true",
         help=(
-            "DEPRECATED alias for --write-mode draft --lane preview. Commit and push each "
+            "DEPRECATED alias for --write-mode draft --lane preview; also requires "
+            "--expected-write-branch. Commit and push each "
             "successful write (create_concept, init_bundle) into the "
             "git repository containing the bundle; MCP-created concepts get status: draft + "
             "generated: process:okf-mcp trust fields. Git failures degrade to warnings in "
@@ -992,12 +1017,14 @@ def main(argv: list[str] | None = None) -> int:
     bundles = [_parse_bundle_arg(b) for b in args.bundles]
     if args.git_commit:
         print(
-            "warning: --git-commit is deprecated; use --write-mode draft --lane preview",
+            "warning: --git-commit is deprecated; use --write-mode draft --lane preview "
+            "--expected-write-branch BRANCH",
             file=sys.stderr,
         )
     server = make_server(
         bundles, host=args.host, port=args.port, write_mode=args.write_mode,
-        lane=args.lane, upstream_ref=args.upstream_ref,
+        lane=args.lane, expected_write_branch=args.expected_write_branch,
+        upstream_ref=args.upstream_ref,
         publication_profile=args.publication_profile,
         git_commit=True if args.git_commit else None,
     )
