@@ -9,7 +9,7 @@ description: Canonical reference for the okf CLI and okf-mcp server — each too
 
 Canonical reference for the `okf` CLI and the `okf-mcp` server. Each tool's **canonical description** — the agent trigger surface — lives in a `<!-- desc:start -->` … `<!-- desc:end -->` block below; the test suite asserts these match the strings embedded in [okf-mcp](/interfaces/okf-mcp.md), so this page and the server never drift (see [Tool doc sync](/conventions/tool-doc-sync.md)).
 
-Most commands operate on a *bundle* — a directory of OKF `.md` concept files. Read-only servers expose `search`, `read_concept`, `graph_links`, `validate`, `list_bundles`, and `sync_status`. Preview servers started with `--write-mode draft --lane preview --expected-write-branch <preview-branch>` additionally expose `create_concept` and `init_bundle`. The preview branch must differ from `main` and the branch named by `--upstream-ref`; each write verifies it before mutation and pushes explicitly to that preview ref.
+Most commands operate on a *bundle* — a directory of OKF `.md` concept files. Read-only servers expose `search`, `read_concept`, `graph_links`, `validate`, `list_bundles`, and `sync_status`. Preview servers started with `--write-mode draft --lane preview --expected-write-branch <preview-branch>` additionally expose `create_concept` and `init_bundle`. The preview branch must differ from `main` and the full branch named by `--upstream-ref`. Upstream refs use `REMOTE/BRANCH` or `refs/remotes/REMOTE/BRANCH`, with the complete remaining path treated as the branch; revision expressions and raw object IDs are rejected. Each write verifies the preview branch before mutation and pushes explicitly to that preview ref.
 
 ## search
 

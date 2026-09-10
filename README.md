@@ -224,9 +224,11 @@ The default stable server is read-only: **`search`**, **`read_concept`**,
 Start a review checkout with `--write-mode draft --lane preview
 --expected-write-branch <preview-branch>` to add
 **`create_concept`** and **`init_bundle`**; those tools are absent when writes
-are disabled. The preview branch must differ from `main` and the branch named
-by `--upstream-ref`; writes verify the checked-out branch before mutation and
-push with an explicit preview refspec. Every concept also has an
+are disabled. The preview branch must differ from `main` and the full branch
+named by `--upstream-ref`. Upstream refs use `REMOTE/BRANCH` or
+`refs/remotes/REMOTE/BRANCH`; revision expressions and raw object IDs are
+rejected. Writes verify the checked-out branch before mutation and push with
+an explicit preview refspec. Every concept also has an
 `okf://<bundle>/concepts/<id>.md` resource.
 
 Search returns the v0.3 cursor-page contract by default. During migration,

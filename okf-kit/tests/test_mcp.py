@@ -11,6 +11,7 @@ from okf_kit.core.parse import parse_concept
 from okf_kit.mcp import (
     BundleRegistry,
     DuplicateBundleNameError,
+    _canonical_upstream_ref,
     _parse_bundle_arg,
     make_server,
     tool_create_concept,
@@ -256,7 +257,7 @@ def test_make_server_draft_rejects_main_destination(tmp_path: Path):
         ("stable", "origin/stable"),
         ("release/stable", "origin/release/stable"),
         ("release/stable", "refs/remotes/origin/release/stable"),
-        ("release/stable", "release/stable"),
+        ("stable", "release/stable"),
     ],
 )
 def test_make_server_draft_rejects_configured_upstream_branch(
@@ -269,6 +270,43 @@ def test_make_server_draft_rejects_configured_upstream_branch(
             {"kb": _bundle(tmp_path)}, write_mode="draft", lane="preview",
             expected_write_branch=expected_write_branch, upstream_ref=upstream_ref,
         )
+
+
+@pytest.mark.parametrize(
+    "upstream_ref",
+    [
+        "origin/release/stable^0",
+        "origin/release/stable~1",
+        "a" * 40,
+    ],
+)
+def test_make_server_rejects_non_branch_upstream_revisions(
+    tmp_path: Path,
+    upstream_ref: str,
+):
+    with pytest.raises(ValueError, match="canonical remote branch ref"):
+        make_server({"kb": _bundle(tmp_path)}, upstream_ref=upstream_ref)
+
+
+def test_make_server_allows_distinct_suffix_branch_names(tmp_path: Path):
+    server = make_server(
+        {"kb": _bundle(tmp_path)},
+        write_mode="draft",
+        lane="preview",
+        expected_write_branch="stable",
+        upstream_ref="origin/release/stable",
+    )
+    assert {tool.name for tool in asyncio.run(server.list_tools())} >= {
+        "create_concept",
+        "init_bundle",
+    }
+
+
+def test_canonical_upstream_ref_preserves_full_hierarchical_branch():
+    assert _canonical_upstream_ref("origin/release/stable") == (
+        "refs/remotes/origin/release/stable",
+        "release/stable",
+    )
 
 
 def test_tool_search_paginates_and_filters_exact_metadata(tmp_path: Path):

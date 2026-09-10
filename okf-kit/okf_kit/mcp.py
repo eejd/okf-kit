@@ -56,6 +56,46 @@ from okf_kit.core.search import Hit, build_index, search_page
 from okf_kit.core.templates import create_concept, init_bundle
 from okf_kit.core.validate import validate_bundle
 
+
+def _canonical_upstream_ref(upstream_ref: str) -> tuple[str, str]:
+    """Return the canonical remote ref and its full branch name.
+
+    Accepted forms are ``REMOTE/BRANCH`` and
+    ``refs/remotes/REMOTE/BRANCH``. ``REMOTE`` is one path component and
+    ``BRANCH`` is every remaining component, so hierarchical branch names
+    retain their full identity.
+    """
+    short = upstream_ref
+    if short.startswith("refs/remotes/"):
+        short = short.removeprefix("refs/remotes/")
+    elif short.startswith("refs/"):
+        short = ""
+    parts = short.split("/")
+    invalid_component = any(
+        not part
+        or part.startswith(".")
+        or part.startswith("-")
+        or part.endswith(".")
+        or part.endswith(".lock")
+        for part in parts
+    )
+    forbidden = any(
+        ord(char) <= 32 or ord(char) == 127 or char in "~^:?*[\\"
+        for char in short
+    )
+    if (
+        len(parts) < 2
+        or invalid_component
+        or ".." in short
+        or "@{" in short
+        or forbidden
+    ):
+        raise ValueError(
+            "upstream_ref must be a canonical remote branch ref: "
+            "REMOTE/BRANCH or refs/remotes/REMOTE/BRANCH"
+        )
+    return f"refs/remotes/{short}", "/".join(parts[1:])
+
 _CREATE_DESC = tool_descriptions.CREATE_DESC
 _GRAPH_DESC = tool_descriptions.GRAPH_DESC
 _INIT_DESC = tool_descriptions.INIT_DESC
@@ -715,7 +755,7 @@ def make_server(
               commits successful writes from a preview checkout.
         lane: Authority lane reported by ``sync_status``. Draft mode requires preview.
         expected_write_branch: Required in draft mode and verified twice per write.
-        upstream_ref: Ref compared with the served checkout for reconciliation.
+        upstream_ref: Canonical remote branch ref compared with the served checkout.
         publication_profile: Optional governed-publication validation dialect.
         git_commit: Deprecated compatibility alias for draft/preview mode.
     """
@@ -729,20 +769,20 @@ def make_server(
         write_mode = "draft"
         if lane == "stable":
             lane = "preview"
+    upstream_ref, stable_branch = _canonical_upstream_ref(upstream_ref)
     if write_mode == "draft" and lane != "preview":
         raise ValueError("draft write mode requires the preview lane")
     if write_mode == "draft" and not expected_write_branch:
         raise ValueError("draft write mode requires expected_write_branch")
-    if write_mode == "draft" and expected_write_branch is not None:
-        targets_upstream = (
-            upstream_ref == expected_write_branch
-            or upstream_ref.endswith(f"/{expected_write_branch}")
+    if (
+        write_mode == "draft"
+        and expected_write_branch is not None
+        and expected_write_branch in {"main", stable_branch}
+    ):
+        raise ValueError(
+            "draft write mode requires a preview destination distinct from "
+            f"main and upstream stable branch {stable_branch!r}"
         )
-        if expected_write_branch == "main" or targets_upstream:
-            raise ValueError(
-                "draft write mode requires a preview destination distinct from "
-                f"main and configured upstream ref {upstream_ref!r}"
-            )
     reg = BundleRegistry(bundles)
     git = GitBackend(reg)
     write_git = git if write_mode == "draft" else None
@@ -1009,7 +1049,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--upstream-ref", default="origin/main",
-        help="Git ref used to reconcile the served revision (default origin/main).",
+        help=(
+            "Canonical remote branch ref used for reconciliation: REMOTE/BRANCH or "
+            "refs/remotes/REMOTE/BRANCH (default origin/main). Git revision expressions "
+            "and raw object IDs are rejected."
+        ),
     )
     parser.add_argument(
         "--publication-profile", choices=["hive"], default=None,
