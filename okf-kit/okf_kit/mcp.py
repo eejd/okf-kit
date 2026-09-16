@@ -105,6 +105,35 @@ _SEARCH_DESC = tool_descriptions.SEARCH_DESC
 _SYNC_STATUS_DESC = tool_descriptions.SYNC_STATUS_DESC
 _VALIDATE_DESC = tool_descriptions.VALIDATE_DESC
 
+
+def _lane_suffix(lane: str, write_mode: str, expected_write_branch: str | None) -> str:
+    """A per-instance self-description appended to a tool's description at
+    registration time in :func:`make_server`.
+
+    Deliberately NOT part of the canonical ``tool_descriptions`` module
+    constants above (those describe what a tool *does* and are shared,
+    synced-with-wiki text — see ``tests/test_docs.py``); this describes
+    *which instance* answered, which varies per deployment (stable vs.
+    review lane, or a domain bundle) and cannot be a module-level constant.
+
+    Tool-selection reliability degrades sharply as the number of available
+    tools/servers grows, and this portfolio runs several okf-* MCP servers
+    side by side (stable + review + domain KBs) — an agent should be able
+    to tell which lane answered from the tool call itself, not only from a
+    routing table it has to recall unprompted. See hive-ecosystem ADR-0526
+    amendment 2026-09-16, "routing surfaces must self-describe".
+    """
+    if write_mode == "draft":
+        return (
+            f" [{lane} lane: writes are accepted and commit to the "
+            f"'{expected_write_branch}' branch for human review — nothing "
+            "written here is authoritative until a human merges it.]"
+        )
+    return (
+        f" [{lane} lane: read-only, reviewed content. To propose a change, "
+        "use this bundle's review-lane MCP endpoint instead of writing here.]"
+    )
+
 BundleName = Annotated[
     str,
     Field(
@@ -787,11 +816,12 @@ def make_server(
     git = GitBackend(reg)
     write_git = git if write_mode == "draft" else None
     server = FastMCP("okf", host=host, port=port, streamable_http_path="/mcp")
+    lane_suffix = _lane_suffix(lane, write_mode, expected_write_branch)
 
     @server.tool(
         name="search",
         title="Search concepts",
-        description=_SEARCH_DESC,
+        description=_SEARCH_DESC + lane_suffix,
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
     )
     def _search(
@@ -811,7 +841,7 @@ def make_server(
     @server.tool(
         name="read_concept",
         title="Read concept",
-        description=_READ_DESC,
+        description=_READ_DESC + lane_suffix,
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
     )
     def _read_concept(
@@ -826,7 +856,7 @@ def make_server(
     @server.tool(
         name="graph_links",
         title="Traverse graph links",
-        description=_GRAPH_DESC,
+        description=_GRAPH_DESC + lane_suffix,
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
     )
     def _graph_links(
@@ -840,7 +870,7 @@ def make_server(
     @server.tool(
         name="validate",
         title="Validate bundle",
-        description=_VALIDATE_DESC,
+        description=_VALIDATE_DESC + lane_suffix,
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
     )
     def _validate(bundle: BundleName) -> dict[str, Any]:
@@ -884,7 +914,7 @@ def make_server(
         server.tool(
             name="create_concept",
             title="Create concept",
-            description=_CREATE_DESC,
+            description=_CREATE_DESC + lane_suffix,
             annotations=ToolAnnotations(
                 readOnlyHint=False, destructiveHint=False, idempotentHint=False,
                 openWorldHint=False,
@@ -893,7 +923,7 @@ def make_server(
         server.tool(
             name="init_bundle",
             title="Initialize bundle",
-            description=_INIT_DESC,
+            description=_INIT_DESC + lane_suffix,
             annotations=ToolAnnotations(
                 readOnlyHint=False, destructiveHint=True, idempotentHint=True,
                 openWorldHint=False,
@@ -903,7 +933,7 @@ def make_server(
     @server.tool(
         name="list_bundles",
         title="List registered bundles",
-        description=_LIST_BUNDLES_DESC,
+        description=_LIST_BUNDLES_DESC + lane_suffix,
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
     )
     def _list_bundles() -> list[dict[str, Any]]:
@@ -912,7 +942,7 @@ def make_server(
     @server.tool(
         name="sync_status",
         title="Bundle git provenance",
-        description=_SYNC_STATUS_DESC,
+        description=_SYNC_STATUS_DESC + lane_suffix,
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
     )
     def _sync_status(bundle: BundleName) -> dict[str, Any]:
