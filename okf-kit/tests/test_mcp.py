@@ -12,6 +12,7 @@ from okf_kit.mcp import (
     BundleRegistry,
     DuplicateBundleNameError,
     _canonical_upstream_ref,
+    _lane_suffix,
     _parse_bundle_arg,
     make_server,
     tool_create_concept,
@@ -161,6 +162,72 @@ def test_make_server_stable_omits_mutating_tools(tmp_path: Path):
     assert "init_bundle" not in names
     for tool in tools:
         assert tool.description and len(tool.description) > 30  # agent-triggerable
+
+
+def test_lane_suffix_stable_names_lane_and_points_to_review_endpoint():
+    suffix = _lane_suffix("stable", "disabled", None)
+    assert "stable lane" in suffix
+    assert "read-only" in suffix
+    assert "review-lane" in suffix
+
+
+def test_lane_suffix_draft_write_tool_names_lane_and_destination_branch():
+    suffix = _lane_suffix("preview", "draft", "okf-preview-hive-okf", tool_writes=True)
+    assert "preview lane" in suffix
+    assert "'okf-preview-hive-okf'" in suffix
+    assert "not authoritative" in suffix or "nothing written here is authoritative" in suffix
+
+
+def test_lane_suffix_draft_read_only_tool_does_not_claim_it_writes():
+    suffix = _lane_suffix("preview", "draft", "okf-preview-hive-okf")
+    assert "preview lane" in suffix
+    assert "okf-preview-hive-okf" in suffix
+    assert "this tool itself is read-only" in suffix
+    assert "this tool writes" not in suffix
+
+
+def test_lane_suffix_draft_requires_expected_write_branch():
+    with pytest.raises(ValueError):
+        _lane_suffix("preview", "draft", None)
+
+
+def test_lane_suffix_disabled_preview_is_not_circular():
+    suffix = _lane_suffix("preview", "disabled", None)
+    assert "preview lane" in suffix
+    # Would be circular if phrased as "use this bundle's review-lane MCP
+    # endpoint instead" — the caller IS already on the preview lane.
+    assert "use this bundle's review-lane MCP endpoint" not in suffix
+    assert "not currently accepting" in suffix
+
+
+def test_make_server_stable_tool_descriptions_self_describe_lane(tmp_path: Path):
+    server = make_server({"kb": _bundle(tmp_path)})
+    tools = asyncio.run(server.list_tools())
+    for tool in tools:
+        assert "stable lane" in tool.description
+        assert "read-only" in tool.description
+
+
+def test_make_server_preview_tool_descriptions_self_describe_lane_and_branch(tmp_path: Path):
+    server = make_server(
+        {"kb": _bundle(tmp_path)},
+        write_mode="draft",
+        lane="preview",
+        expected_write_branch="okf-preview-kb",
+    )
+    tools = asyncio.run(server.list_tools())
+    names = {t.name for t in tools}
+    assert {"create_concept", "init_bundle"} <= names
+    for tool in tools:
+        assert "preview lane" in tool.description
+        assert "okf-preview-kb" in tool.description
+        if tool.name in {"create_concept", "init_bundle"}:
+            assert "this tool writes" in tool.description
+        else:
+            # A read-only tool must never claim it writes, even on a
+            # draft-mode server — only the server-level capability note.
+            assert "this tool itself is read-only" in tool.description
+            assert "this tool writes" not in tool.description
 
 
 def test_registry_rejects_duplicate_names_from_list_form(tmp_path: Path):
