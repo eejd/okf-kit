@@ -106,7 +106,13 @@ _SYNC_STATUS_DESC = tool_descriptions.SYNC_STATUS_DESC
 _VALIDATE_DESC = tool_descriptions.VALIDATE_DESC
 
 
-def _lane_suffix(lane: str, write_mode: str, expected_write_branch: str | None) -> str:
+def _lane_suffix(
+    lane: str,
+    write_mode: str,
+    expected_write_branch: str | None,
+    *,
+    tool_writes: bool = False,
+) -> str:
     """A per-instance self-description appended to a tool's description at
     registration time in :func:`make_server`.
 
@@ -117,17 +123,39 @@ def _lane_suffix(lane: str, write_mode: str, expected_write_branch: str | None) 
     review lane, or a domain bundle) and cannot be a module-level constant.
 
     Tool-selection reliability degrades sharply as the number of available
-    tools/servers grows, and this portfolio runs several okf-* MCP servers
-    side by side (stable + review + domain KBs) — an agent should be able
-    to tell which lane answered from the tool call itself, not only from a
-    routing table it has to recall unprompted. See hive-ecosystem ADR-0526
-    amendment 2026-09-16, "routing surfaces must self-describe".
+    tools/servers grows: a client talking to several MCP servers side by
+    side benefits from being able to tell which instance answered from the
+    tool call itself, not only from an external routing document it has to
+    already know to consult.
+
+    ``tool_writes`` distinguishes a tool that itself performs the write
+    (``create_concept``/``init_bundle``, only ever registered when
+    ``write_mode == "draft"``) from a read-only tool that merely happens to
+    be served by a draft-mode instance — without this, a read-only tool's
+    description would misleadingly say "writes are accepted" about itself.
     """
     if write_mode == "draft":
+        if expected_write_branch is None:
+            raise ValueError("draft write mode requires expected_write_branch for _lane_suffix")
+        if tool_writes:
+            return (
+                f" [{lane} lane: this tool writes and commits to the "
+                f"'{expected_write_branch}' branch for human review — nothing "
+                "written here is authoritative until a human merges it.]"
+            )
         return (
-            f" [{lane} lane: writes are accepted and commit to the "
-            f"'{expected_write_branch}' branch for human review — nothing "
-            "written here is authoritative until a human merges it.]"
+            f" [{lane} lane: this server accepts writes (create_concept/init_bundle) "
+            f"committing to '{expected_write_branch}' for human review; this tool "
+            "itself is read-only.]"
+        )
+    if lane == "preview":
+        # write_mode=="disabled" with lane=="preview" is a read-only view of
+        # the preview branch, not the writable review lane itself — telling
+        # the caller to use "this bundle's review-lane endpoint" would be
+        # circular since this already reports as the preview lane.
+        return (
+            " [preview lane, read-only: this instance is not currently accepting "
+            "writes — check sync_status for a writable review-lane instance.]"
         )
     return (
         f" [{lane} lane: read-only, reviewed content. To propose a change, "
@@ -817,6 +845,15 @@ def make_server(
     write_git = git if write_mode == "draft" else None
     server = FastMCP("okf", host=host, port=port, streamable_http_path="/mcp")
     lane_suffix = _lane_suffix(lane, write_mode, expected_write_branch)
+    # Separate suffix for the two tools that actually perform the write
+    # (only ever registered below when write_mode == "draft", so this is
+    # only ever computed — and only ever differs from lane_suffix — in that
+    # case; see _lane_suffix's tool_writes parameter).
+    write_lane_suffix = (
+        _lane_suffix(lane, write_mode, expected_write_branch, tool_writes=True)
+        if write_mode == "draft"
+        else lane_suffix
+    )
 
     @server.tool(
         name="search",
@@ -914,7 +951,7 @@ def make_server(
         server.tool(
             name="create_concept",
             title="Create concept",
-            description=_CREATE_DESC + lane_suffix,
+            description=_CREATE_DESC + write_lane_suffix,
             annotations=ToolAnnotations(
                 readOnlyHint=False, destructiveHint=False, idempotentHint=False,
                 openWorldHint=False,
@@ -923,7 +960,7 @@ def make_server(
         server.tool(
             name="init_bundle",
             title="Initialize bundle",
-            description=_INIT_DESC + lane_suffix,
+            description=_INIT_DESC + write_lane_suffix,
             annotations=ToolAnnotations(
                 readOnlyHint=False, destructiveHint=True, idempotentHint=True,
                 openWorldHint=False,
