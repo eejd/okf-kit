@@ -72,7 +72,7 @@ Create a concept **via MCP**. Unlike the CLI's `okf new` (a thin stub), it enfor
 - Containment + atomic exclusive create are inherited from `core/templates.create_concept`.
 
 <!-- desc:start -->
-Create one substantive draft OKF concept on the configured preview branch. The server verifies its expected branch before writing and again before commit/push, controls status and generated provenance, and rejects caller-supplied verified/trust fields. Use after searching/reading nearby concepts so the new page is specific, linked, and non-duplicative. The body must be >=120 words and include at least one depth heading: # Overview, # Definition, # Schema, # Endpoints, # API, # Steps, # Examples, or # Citations. Write concrete Markdown with relevant headings, examples, caveats, and bundle-relative links such as [Users](/tables/users.md); do not create placeholders or generic filler. Returns the created cid and path; rejects thin bodies, invalid ids, path escapes, and existing files.
+Create one substantive draft OKF concept on the configured preview branch. The server verifies its expected branch and fast-forwards to the hub before writing, verifies the branch again before commit/push, and fails the call (leaving nothing behind) if the concept cannot be committed and pushed. It controls status and generated provenance, and rejects caller-supplied verified/trust fields. Use after searching/reading nearby concepts so the new page is specific, linked, and non-duplicative. The body must be >=120 words and include at least one depth heading: # Overview, # Definition, # Schema, # Endpoints, # API, # Steps, # Examples, or # Citations. Write concrete Markdown with relevant headings, examples, caveats, and bundle-relative links such as [Users](/tables/users.md); do not create placeholders or generic filler. Returns the created cid and path; rejects thin bodies, invalid ids, path escapes, and existing files.
 <!-- desc:end -->
 
 ## init_bundle
@@ -82,7 +82,7 @@ Initialize (or re-initialize) a bundle root via MCP — writes `index.md` with `
 - **MCP:** `init_bundle(bundle, okf_version='0.2') -> {initialized, path, git?}`
 
 <!-- desc:start -->
-Initialize a registered OKF bundle root in the preview lane by writing root index.md with okf_version after verifying the expected write branch. Creates the directory if needed and rewrites index.md if it already exists, so use it before authoring a new bundle or when intentionally resetting the root index metadata. Example: init_bundle(bundle='wiki').
+Initialize a registered OKF bundle root in the preview lane by writing root index.md with okf_version after verifying the expected write branch and fast-forwarding to the hub. Fails the call, restoring the previous index.md, if the write cannot be committed and pushed. Creates the directory if needed and rewrites index.md if it already exists, so use it before authoring a new bundle or when intentionally resetting the root index metadata. Example: init_bundle(bundle='wiki').
 <!-- desc:end -->
 
 ## list_bundles

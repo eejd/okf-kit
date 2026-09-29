@@ -414,6 +414,7 @@ class GitBackend:
         if writer is None:
             raise ValueError("draft writes require a git-tracked bundle")
         writer.require_branch(expected_branch)
+        writer.sync_before_write(expected_branch)
         return writer
 
 
@@ -591,9 +592,10 @@ def _git_commit_result(
     """Commit-and-push for a completed write, or ``None`` when git mode is off.
 
     Never raises: a bundle outside any git repository degrades to a
-    structured ``{committed: false, detail: ...}`` result — the file write
-    that preceded this call has already succeeded and must never be undone
-    or reported as failed because of a git problem.
+    structured ``{committed: false, detail: ...}`` result. With an expected
+    branch the writer undoes a failed write and marks the outcome
+    ``failed: true``; callers turn that into a tool error via
+    ``_raise_if_write_failed``.
     """
     if git is None:
         return None
@@ -605,6 +607,12 @@ def _git_commit_result(
             "detail": "bundle is not inside a git repository (or git is unavailable)",
         }
     return writer.commit_and_push(paths, message, expected_branch=expected_branch)
+
+
+def _raise_if_write_failed(outcome: dict[str, Any] | None) -> None:
+    """Fail the tool call when a preview-lane write could not reach the hub."""
+    if outcome and outcome.get("failed"):
+        raise ValueError(f"draft write not saved: {outcome.get('detail', 'git failure')}")
 
 
 def tool_create_concept(
@@ -633,7 +641,7 @@ def tool_create_concept(
     (caller-supplied status/generated values are overwritten and verified/trust
     fields are rejected), and the written
     file is committed and pushed; the git outcome is reported in the result's
-    ``git`` key and never fails the create.
+    ``git`` key. A failed commit or push undoes the write and fails the call.
     """
     started_at = time.monotonic()
     ok = False
@@ -673,12 +681,13 @@ def tool_create_concept(
             body=body,
             extra=extra_fm or None,
         )
-        ok = True
         result: dict[str, Any] = {"created": True, "cid": cid, "path": str(path)}
         git_outcome = _git_commit_result(
             git, bundle, [path], f"okf-mcp: create concept {cid}",
             expected_branch=expected_branch,
         )
+        _raise_if_write_failed(git_outcome)
+        ok = True
         if git_outcome is not None:
             result["git"] = git_outcome
         return result
@@ -712,12 +721,13 @@ def tool_init_bundle(
                 raise ValueError("draft writes require an explicit expected branch")
             git.require_branch(bundle, expected_branch)
         path = init_bundle(reg.get(bundle), okf_version=okf_version)
-        ok = True
         result: dict[str, Any] = {"initialized": True, "path": str(path)}
         git_outcome = _git_commit_result(
             git, bundle, [path], f"okf-mcp: init bundle {bundle}",
             expected_branch=expected_branch,
         )
+        _raise_if_write_failed(git_outcome)
+        ok = True
         if git_outcome is not None:
             result["git"] = git_outcome
         return result
@@ -1134,8 +1144,9 @@ def main(argv: list[str] | None = None) -> int:
             "--expected-write-branch. Commit and push each "
             "successful write (create_concept, init_bundle) into the "
             "git repository containing the bundle; MCP-created concepts get status: draft + "
-            "generated: process:okf-mcp trust fields. Git failures degrade to warnings in "
-            "the tool result — the file write itself is never rolled back."
+            "generated: process:okf-mcp trust fields. Writes are all or nothing, as with "
+            "--write-mode draft: a failed commit or push rolls the write back and fails "
+            "the tool call."
         ),
     )
     args = parser.parse_args(argv)
