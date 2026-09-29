@@ -1144,8 +1144,9 @@ def main(argv: list[str] | None = None) -> int:
             "--expected-write-branch. Commit and push each "
             "successful write (create_concept, init_bundle) into the "
             "git repository containing the bundle; MCP-created concepts get status: draft + "
-            "generated: process:okf-mcp trust fields. Git failures degrade to warnings in "
-            "the tool result — the file write itself is never rolled back."
+            "generated: process:okf-mcp trust fields. Writes are all or nothing, as with "
+            "--write-mode draft: a failed commit or push rolls the write back and fails "
+            "the tool call."
         ),
     )
     args = parser.parse_args(argv)

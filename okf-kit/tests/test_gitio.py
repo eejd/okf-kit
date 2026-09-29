@@ -674,6 +674,46 @@ def test_write_refused_after_hub_preview_was_rewritten(tmp_path: Path):
     assert not (bundle / "tables" / "users.md").exists()
 
 
+def test_first_write_creates_preview_branch_on_hub(tmp_path: Path):
+    """The hub has no preview branch yet (ls-remote exit 2): the write proceeds
+    and its push creates the branch."""
+    hub, bundle = _hub_and_clone(tmp_path)
+    _checkout_preview(bundle)
+    assert _run(hub, "branch", "--list", "preview") == ""
+    reg = BundleRegistry({"kb": bundle})
+    res = _create(reg, "tables/users")
+    assert res["git"]["pushed"] is True
+    assert "kb/tables/users.md" in _hub_files(hub, "preview")
+
+
+def test_strict_commit_failure_removes_directories_the_write_created(
+    tmp_path: Path, monkeypatch
+):
+    import okf_kit.core.gitio as gitio
+
+    monkeypatch.setattr(gitio.time, "sleep", lambda s: None)
+    _, bundle = _hub_and_clone(tmp_path)
+    _preview_on_hub(bundle)
+    (bundle / "tables" / "deep").mkdir(parents=True)
+    (bundle / "tables" / "deep" / "users.md").write_text("---\ntype: Table\n---\nx\n")
+    writer = GitWriter.discover(bundle)
+    assert writer is not None
+    real_git = writer._git
+
+    def failing_commit(*args):
+        if args and args[0] == "commit":
+            return gitio.GitResult(ok=False, detail="simulated commit failure", returncode=1)
+        return real_git(*args)
+
+    monkeypatch.setattr(writer, "_git", failing_commit)
+    result = writer.commit_and_push(
+        [bundle / "tables" / "deep" / "users.md"], "msg", expected_branch="preview"
+    )
+    assert result["failed"] is True
+    assert not (bundle / "tables").exists()
+    assert bundle.is_dir()
+
+
 def test_write_refused_when_hub_unreachable(tmp_path: Path):
     _, bundle = _hub_and_clone(tmp_path)
     _checkout_preview(bundle)

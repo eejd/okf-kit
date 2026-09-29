@@ -42,7 +42,9 @@ _GIT_TIMEOUT_S = 30
 # later in both cases), so the retry is deliberately NOT signature-matched:
 # commit and push each get one unconditional delayed retry on failure. A
 # genuine failure simply fails identically twice, costing one 2s sleep; a
-# cache race succeeds on the second attempt.
+# cache race succeeds on the second attempt. The cost is visible to clients:
+# a preview-lane push the hub refuses (frozen or diverged) returns its tool
+# error after one 2s retry.
 _OBJECT_RACE_RETRY_DELAY_S = 2.0
 _DEFAULT_AUTHOR_NAME = "okf-mcp"
 _DEFAULT_AUTHOR_EMAIL = "okf-mcp@hive.local"
@@ -209,11 +211,18 @@ class GitWriter:
     def _discard(self, rels: list[str]) -> None:
         """Undo uncommitted writes to ``rels``: restore tracked files, delete new ones."""
         self._git("reset", "-q", "--", *rels)
+        root = self.repo_root.resolve()
         for rel in rels:
             if self._git("cat-file", "-e", f"HEAD:{rel}").ok:
                 self._git("checkout", "HEAD", "--", rel)
-            else:
-                (self.repo_root / rel).unlink(missing_ok=True)
+                continue
+            path = root / rel
+            path.unlink(missing_ok=True)
+            # Remove directories the write created, as `reset --keep` would.
+            parent = path.parent
+            while parent != root and parent.is_dir() and not any(parent.iterdir()):
+                parent.rmdir()
+                parent = parent.parent
 
     def commit_and_push(
         self,
@@ -330,6 +339,8 @@ class GitWriter:
                     "detail": detail,
                 }
             detail += f"; rollback failed ({undone.detail}), local commit {sha} remains"
+        elif sha is None:
+            detail += "; could not read the new commit's sha, so it was not rolled back"
         else:
             detail += f"; HEAD moved, local commit {sha} not rolled back"
         return {

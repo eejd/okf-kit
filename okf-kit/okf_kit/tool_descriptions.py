@@ -55,7 +55,9 @@ CREATE_DESC = (
 
 INIT_DESC = (
     "Initialize a registered OKF bundle root in the preview lane by writing root index.md with "
-    "okf_version after verifying the expected write branch. Creates the directory if needed and "
+    "okf_version after verifying the expected write branch and fast-forwarding to the hub. Fails "
+    "the call, restoring the previous index.md, if the write cannot be committed and pushed. "
+    "Creates the directory if needed and "
     "rewrites index.md if it already exists, so use it before authoring a new bundle or when "
     "intentionally resetting the root index metadata. Example: init_bundle(bundle='wiki')."
 )
