@@ -9,17 +9,21 @@ credentials ever exist inside the serving process/container.
 
 Design rules, in order of importance:
 
-1. **A git failure never loses a write and never fails the tool call.** The
-   concept file is already on disk by the time this module runs; any git
-   problem degrades to a structured warning in the tool result (and the
-   stderr tool-call log), not an exception.
-2. **No global git config dependence.** Author identity is passed with
+1. **A preview-lane write is all or nothing** (``expected_branch`` set, which
+   every draft-mode tool call does). Before writing, the checkout
+   fast-forwards to the hub's preview branch and refuses to write if it has
+   unpushed commits or has diverged. A failed commit or push undoes the
+   write: the commit is rolled back and the file restored, and the result
+   carries ``failed: true`` so the tool call fails visibly (ADR-0509 E6(3),
+   eejd/okf-kit#15). A write that was reported but never reached the hub
+   would otherwise be stranded when the hub preview is rebuilt.
+2. **Without an expected branch, git is best-effort.** Any git problem
+   degrades to a structured warning; a commit that fails to push reports
+   ``pushed: false`` and the next successful push carries it.
+3. **No global git config dependence.** Author identity is passed with
    ``-c user.name``/``-c user.email`` per invocation, and the repository is
    whitelisted with ``-c safe.directory=<root>`` so a uid mismatch between
    the checkout owner and the serving user does not disable git.
-3. **Push is best-effort and separate from commit.** A commit that lands
-   locally but fails to push reports ``pushed: false`` with the reason; the
-   next successful push carries it.
 """
 from __future__ import annotations
 
@@ -51,6 +55,7 @@ class GitResult:
     ok: bool
     stdout: str = ""
     detail: str = ""
+    returncode: int = 0
 
 
 class GitWriter:
@@ -108,7 +113,12 @@ class GitWriter:
             return GitResult(ok=False, detail=f"git {args[0]} failed to start: {exc}")
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout or "").strip()
-            return GitResult(ok=False, stdout=proc.stdout.strip(), detail=detail[:500])
+            return GitResult(
+                ok=False,
+                stdout=proc.stdout.strip(),
+                detail=detail[:500],
+                returncode=proc.returncode,
+            )
         return GitResult(ok=True, stdout=proc.stdout.strip())
 
     # -- discovery --------------------------------------------------------
@@ -152,6 +162,59 @@ class GitWriter:
                 f"found {branch.stdout!r}"
             )
 
+    def sync_before_write(self, expected_branch: str) -> None:
+        """Fast-forward to the remote ``expected_branch`` before a write, or raise.
+
+        The hub branch is the source of truth for a preview lane; it can move
+        (another writer, or an administrative rebuild), and a write on a stale
+        checkout would be refused on push. Refuses when the checkout has
+        commits the hub lacks (unpushed or diverged), since those are exactly
+        the writes a rebuild would strand. A branch the remote doesn't have
+        yet is allowed: the first push creates it.
+        """
+        exists = self._git(
+            "ls-remote", "--exit-code", self.remote, f"refs/heads/{expected_branch}"
+        )
+        if not exists.ok:
+            if exists.returncode == 2:
+                return
+            raise ValueError(f"cannot reach {self.remote} before writing: {exists.detail}")
+        tracking = f"refs/remotes/{self.remote}/{expected_branch}"
+        fetched = self._retry_once(
+            "fetch", "--quiet", self.remote, f"+refs/heads/{expected_branch}:{tracking}"
+        )
+        if not fetched.ok:
+            raise ValueError(f"git fetch before write: {fetched.detail}")
+        head = self._git("rev-parse", "HEAD")
+        upstream = self._git("rev-parse", tracking)
+        if not (head.ok and upstream.ok):
+            raise ValueError("cannot resolve the checkout or hub preview before writing")
+        if head.stdout == upstream.stdout:
+            return
+        if self._git("merge-base", "--is-ancestor", "HEAD", tracking).ok:
+            merged = self._git("merge", "--ff-only", "--quiet", tracking)
+            if not merged.ok:
+                raise ValueError(f"git fast-forward before write: {merged.detail}")
+            return
+        state = (
+            "has commits the hub lacks"
+            if self._git("merge-base", "--is-ancestor", tracking, "HEAD").ok
+            else "has diverged from the hub"
+        )
+        raise ValueError(
+            f"preview checkout {state} ({head.stdout[:12]} vs {upstream.stdout[:12]}); "
+            "refusing to write until the lane is reconciled"
+        )
+
+    def _discard(self, rels: list[str]) -> None:
+        """Undo uncommitted writes to ``rels``: restore tracked files, delete new ones."""
+        self._git("reset", "-q", "--", *rels)
+        for rel in rels:
+            if self._git("cat-file", "-e", f"HEAD:{rel}").ok:
+                self._git("checkout", "HEAD", "--", rel)
+            else:
+                (self.repo_root / rel).unlink(missing_ok=True)
+
     def commit_and_push(
         self,
         paths: list[Path],
@@ -165,12 +228,16 @@ class GitWriter:
         and never raises. An empty diff (e.g. ``init_bundle`` rewriting an
         identical index.md) reports ``committed: false`` with detail
         ``"nothing to commit"``; that is a no-op, not a failure.
+
+        With ``expected_branch`` set the call is all or nothing (module rule
+        1): any failure undoes the write and adds ``failed: true``.
         """
+        strict = expected_branch is not None
         if expected_branch is not None:
             try:
                 self.require_branch(expected_branch)
             except ValueError as exc:
-                return {"committed": False, "pushed": False, "detail": str(exc)}
+                return self._failed(paths, str(exc))
 
         rels: list[str] = []
         outside: list[str] = []
@@ -180,13 +247,14 @@ class GitWriter:
             except ValueError:
                 outside.append(str(path))
         if outside:
-            return {
-                "committed": False,
-                "pushed": False,
-                "detail": f"path(s) outside repository {self.repo_root}: {', '.join(outside)}",
-            }
+            detail = f"path(s) outside repository {self.repo_root}: {', '.join(outside)}"
+            if strict:
+                return self._failed(paths, detail, rels=rels)
+            return {"committed": False, "pushed": False, "detail": detail}
         added = self._git("add", "--", *rels)
         if not added.ok:
+            if strict:
+                return self._failed(paths, f"git add: {added.detail}", rels=rels)
             return {"committed": False, "pushed": False, "detail": f"git add: {added.detail}"}
 
         # Scoped to OUR paths: exit 0 == none of them differ from HEAD. An
@@ -204,6 +272,8 @@ class GitWriter:
         # intervening I/O.
         committed = self._retry_once("commit", "--only", "-m", message, "--", *rels)
         if not committed.ok:
+            if strict:
+                return self._failed(paths, f"git commit: {committed.detail}", rels=rels)
             return {
                 "committed": False,
                 "pushed": False,
@@ -225,9 +295,51 @@ class GitWriter:
         pushed = self._retry_once("push", self.remote, refspec)
         if pushed.ok:
             result["pushed"] = True
+        elif strict:
+            return self._rollback(result["sha"], f"git push: {pushed.detail}")
         else:
             result["detail"] = f"git push: {pushed.detail}"
         return result
+
+    def _failed(
+        self, paths: list[Path], detail: str, *, rels: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Strict-mode failure before any commit: discard the write and report it."""
+        if rels is None:
+            rels = []
+            for path in paths:
+                try:
+                    rels.append(str(Path(path).resolve().relative_to(self.repo_root.resolve())))
+                except ValueError:
+                    continue
+        if rels:
+            self._discard(rels)
+        return {"committed": False, "pushed": False, "failed": True, "detail": detail}
+
+    def _rollback(self, sha: str | None, detail: str) -> dict[str, Any]:
+        """Strict-mode push failure: drop our own unpushed commit and its files."""
+        head = self._git("rev-parse", "HEAD")
+        if sha and head.ok and head.stdout == sha:
+            undone = self._git("reset", "--keep", "HEAD~1")
+            if undone.ok:
+                return {
+                    "committed": False,
+                    "pushed": False,
+                    "failed": True,
+                    "rolled_back": True,
+                    "detail": detail,
+                }
+            detail += f"; rollback failed ({undone.detail}), local commit {sha} remains"
+        else:
+            detail += f"; HEAD moved, local commit {sha} not rolled back"
+        return {
+            "committed": True,
+            "sha": sha,
+            "pushed": False,
+            "failed": True,
+            "rolled_back": False,
+            "detail": detail,
+        }
 
     def _retry_once(self, *args: str) -> GitResult:
         """Run a git command; on failure, one delayed retry (see the

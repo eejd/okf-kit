@@ -522,3 +522,163 @@ def test_push_any_failure_gets_exactly_one_retry(tmp_path: Path, monkeypatch):
     assert result["committed"] is True
     assert result["pushed"] is False
     assert "remote unreachable" in result["detail"]
+
+
+# -- preview-lane writes are all or nothing (eejd/okf-kit#15) ---------------
+
+
+def _preview_on_hub(bundle: Path) -> None:
+    """Local preview branch that also exists on the hub, as in production."""
+    _checkout_preview(bundle)
+    _run(bundle.parent, "push", "-q", "origin", "preview")
+
+
+def _refuse_pushes(hub: Path) -> None:
+    """A hub that rejects every push, like a frozen hub preview."""
+    hook = hub / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\necho 'refused: hub preview is frozen' >&2\nexit 1\n")
+    hook.chmod(0o755)
+
+
+def _other_writer_pushes(tmp_path: Path, hub: Path, name: str) -> None:
+    other = tmp_path / f"other-{name}"
+    subprocess.run(
+        ["git", "clone", "-q", "-b", "preview", str(hub), str(other)],
+        capture_output=True, text=True, check=True,
+    )
+    (other / "kb" / f"{name}.md").write_text("---\ntype: Table\n---\nx\n", encoding="utf-8")
+    _run(other, "-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
+    _run(other, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", name)
+    _run(other, "push", "-q", "origin", "preview")
+
+
+def _create(reg: BundleRegistry, cid: str) -> dict:
+    return tool_create_concept(
+        reg, "kb", cid, "Table", "T", "d", RICH_BODY,
+        git=GitBackend(reg), expected_branch="preview",
+    )
+
+
+def test_strict_push_failure_rolls_back_commit_and_file(tmp_path: Path, monkeypatch):
+    import okf_kit.core.gitio as gitio
+
+    monkeypatch.setattr(gitio.time, "sleep", lambda s: None)
+    hub, bundle = _hub_and_clone(tmp_path)
+    _preview_on_hub(bundle)
+    before = _run(bundle.parent, "rev-parse", "HEAD")
+    _refuse_pushes(hub)
+    (bundle / "new.md").write_text("---\ntype: Table\n---\nbody\n", encoding="utf-8")
+    writer = GitWriter.discover(bundle)
+    assert writer is not None
+    result = writer.commit_and_push([bundle / "new.md"], "msg", expected_branch="preview")
+    assert result["failed"] is True
+    assert result["rolled_back"] is True
+    assert result["committed"] is False
+    assert "git push" in result["detail"]
+    assert _run(bundle.parent, "rev-parse", "HEAD") == before
+    assert not (bundle / "new.md").exists()
+
+
+def test_create_concept_push_failure_fails_the_call_and_leaves_nothing(
+    tmp_path: Path, monkeypatch
+):
+    import okf_kit.core.gitio as gitio
+
+    monkeypatch.setattr(gitio.time, "sleep", lambda s: None)
+    hub, bundle = _hub_and_clone(tmp_path)
+    _preview_on_hub(bundle)
+    before = _run(bundle.parent, "rev-parse", "HEAD")
+    _refuse_pushes(hub)
+    reg = BundleRegistry({"kb": bundle})
+    with pytest.raises(ValueError, match="draft write not saved: git push"):
+        _create(reg, "tables/users")
+    assert not (bundle / "tables" / "users.md").exists()
+    assert _run(bundle.parent, "rev-parse", "HEAD") == before
+    assert _run(bundle.parent, "status", "--porcelain") == ""
+
+
+def test_init_bundle_push_failure_restores_existing_index(tmp_path: Path, monkeypatch):
+    import okf_kit.core.gitio as gitio
+
+    monkeypatch.setattr(gitio.time, "sleep", lambda s: None)
+    hub, bundle = _hub_and_clone(tmp_path)
+    _preview_on_hub(bundle)
+    original = (bundle / "index.md").read_text(encoding="utf-8")
+    _refuse_pushes(hub)
+    reg = BundleRegistry({"kb": bundle})
+    with pytest.raises(ValueError, match="draft write not saved"):
+        tool_init_bundle(reg, "kb", okf_version="0.3", git=GitBackend(reg), expected_branch="preview")
+    assert (bundle / "index.md").read_text(encoding="utf-8") == original
+    assert _run(bundle.parent, "status", "--porcelain") == ""
+
+
+def test_strict_commit_failure_discards_new_file(tmp_path: Path, monkeypatch):
+    import okf_kit.core.gitio as gitio
+
+    monkeypatch.setattr(gitio.time, "sleep", lambda s: None)
+    _, bundle = _hub_and_clone(tmp_path)
+    _preview_on_hub(bundle)
+    (bundle / "new.md").write_text("---\ntype: Table\n---\nbody\n", encoding="utf-8")
+    writer = GitWriter.discover(bundle)
+    assert writer is not None
+    real_git = writer._git
+
+    def failing_commit(*args):
+        if args and args[0] == "commit":
+            return gitio.GitResult(ok=False, detail="simulated commit failure", returncode=1)
+        return real_git(*args)
+
+    monkeypatch.setattr(writer, "_git", failing_commit)
+    result = writer.commit_and_push([bundle / "new.md"], "msg", expected_branch="preview")
+    assert result["failed"] is True and result["committed"] is False
+    assert not (bundle / "new.md").exists()
+    assert real_git("status", "--porcelain").stdout == ""
+
+
+def test_write_fast_forwards_a_checkout_behind_the_hub(tmp_path: Path):
+    hub, bundle = _hub_and_clone(tmp_path)
+    _preview_on_hub(bundle)
+    _other_writer_pushes(tmp_path, hub, "hub-side")
+    reg = BundleRegistry({"kb": bundle})
+    res = _create(reg, "tables/users")
+    assert res["git"]["pushed"] is True
+    assert {"kb/hub-side.md", "kb/tables/users.md"} <= _hub_files(hub, "preview")
+    assert (bundle / "hub-side.md").exists()
+
+
+def test_write_refused_when_checkout_has_unpushed_commits(tmp_path: Path):
+    _, bundle = _hub_and_clone(tmp_path)
+    _preview_on_hub(bundle)
+    (bundle / "stranded.md").write_text("---\ntype: Table\n---\nx\n", encoding="utf-8")
+    _run(bundle.parent, "-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
+    _run(bundle.parent, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "stranded")
+    reg = BundleRegistry({"kb": bundle})
+    with pytest.raises(ValueError, match="has commits the hub lacks"):
+        _create(reg, "tables/users")
+    assert not (bundle / "tables" / "users.md").exists()
+
+
+def test_write_refused_after_hub_preview_was_rewritten(tmp_path: Path):
+    hub, bundle = _hub_and_clone(tmp_path)
+    _preview_on_hub(bundle)
+    (bundle / "mine.md").write_text("---\ntype: Table\n---\nx\n", encoding="utf-8")
+    _run(bundle.parent, "-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
+    _run(bundle.parent, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "mine")
+    _run(bundle.parent, "push", "-q", "origin", "preview")
+    # An administrative rebuild replaces hub preview with unrelated history.
+    _run(hub, "update-ref", "refs/heads/preview", _run(hub, "rev-parse", "main"))
+    _other_writer_pushes(tmp_path, hub, "rebuilt")
+    reg = BundleRegistry({"kb": bundle})
+    with pytest.raises(ValueError, match="has diverged from the hub"):
+        _create(reg, "tables/users")
+    assert not (bundle / "tables" / "users.md").exists()
+
+
+def test_write_refused_when_hub_unreachable(tmp_path: Path):
+    _, bundle = _hub_and_clone(tmp_path)
+    _checkout_preview(bundle)
+    _run(bundle.parent, "remote", "set-url", "origin", str(tmp_path / "gone.git"))
+    reg = BundleRegistry({"kb": bundle})
+    with pytest.raises(ValueError, match="cannot reach origin"):
+        _create(reg, "tables/users")
+    assert not (bundle / "tables" / "users.md").exists()
