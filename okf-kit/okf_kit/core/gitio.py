@@ -25,6 +25,7 @@ Design rules, in order of importance:
    whitelisted with ``-c safe.directory=<root>`` so a uid mismatch between
    the checkout owner and the serving user does not disable git.
 """
+
 from __future__ import annotations
 
 import os
@@ -174,9 +175,7 @@ class GitWriter:
         the writes a rebuild would strand. A branch the remote doesn't have
         yet is allowed: the first push creates it.
         """
-        exists = self._git(
-            "ls-remote", "--exit-code", self.remote, f"refs/heads/{expected_branch}"
-        )
+        exists = self._git("ls-remote", "--exit-code", self.remote, f"refs/heads/{expected_branch}")
         if not exists.ok:
             if exists.returncode == 2:
                 return
@@ -296,11 +295,7 @@ class GitWriter:
         }
         if not self.push:
             return result
-        refspec = (
-            f"HEAD:refs/heads/{expected_branch}"
-            if expected_branch is not None
-            else "HEAD"
-        )
+        refspec = f"HEAD:refs/heads/{expected_branch}" if expected_branch is not None else "HEAD"
         pushed = self._retry_once("push", self.remote, refspec)
         if pushed.ok:
             result["pushed"] = True
@@ -361,6 +356,251 @@ class GitWriter:
             return result
         time.sleep(_OBJECT_RACE_RETRY_DELAY_S)
         return self._git(*args)
+
+    def remote_branch_sha(self, branch: str) -> str | None:
+        """Cheap ``ls-remote`` check for ``branch`` on this writer's remote.
+
+        No fetch, no object transfer — one ref advertisement round trip.
+        Returns ``None`` when the branch does not exist on the remote (exit
+        code 2) or the remote is unreachable, so callers treat "no answer"
+        and "branch absent" alike: both mean "nothing to converge to yet".
+        """
+        result = self._git("ls-remote", "--exit-code", self.remote, f"refs/heads/{branch}")
+        if not result.ok or not result.stdout:
+            return None
+        return result.stdout.split()[0]
+
+    def converge(
+        self,
+        branch: str,
+        *,
+        lane: str = "stable",
+        rescue_ref_prefix: str = "refs/okf/rescue",
+        preserve_ref_globs: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        """Bring this checkout's ``branch`` up to date with the hub, in place.
+
+        The read side of the hub<->serve relationship (the write side is
+        :meth:`sync_before_write`, which this method's fast-forward/ahead
+        logic mirrors). Never restarts a process and never raises: every
+        outcome is a structured dict with an ``action`` key, so a caller
+        (the sync coordinator, or an admin refresh route) can report it
+        without a try/except.
+
+        ``action`` values:
+          - ``"noop"``: already at the hub's tip.
+          - ``"fast-forward"``: this checkout was behind; merged forward.
+          - ``"ahead"``: this checkout has commits the hub lacks (normal only
+            for a lane with local writers, e.g. a review lane between a
+            push and the hub observing it) — reported, never rewritten.
+          - ``"reset"``: diverged, but every one of this checkout's own
+            commits is reachable from a ref matching ``preserve_ref_globs``
+            (e.g. ``refs/okf/preview-before/*`` recorded by an admin
+            rebuild) — so nothing this checkout held is actually lost by
+            resetting onto the hub. The pre-reset tip is recorded under
+            ``rescue_ref_prefix`` first, so it stays recoverable either way.
+          - ``"diverged"``: reset would be unsafe (some local commit is not
+            covered by a preserve ref) — reported, nothing changed.
+          - ``"dirty"``: the worktree has uncommitted changes — refused,
+            nothing changed, since a reset/merge would clobber them.
+          - ``"no-branch"``: the hub has no such branch yet.
+          - ``"error"``: a git operation failed unexpectedly; ``detail``
+            carries the message.
+
+        ``lane`` is carried through into the result only for the caller's
+        own reporting (e.g. ``sync_status``); it changes no behavior here —
+        the safety of a reset is decided entirely by ``preserve_ref_globs``,
+        which the caller sets per lane.
+        """
+        before = self._git("rev-parse", "HEAD")
+        if not before.ok:
+            return {"action": "error", "lane": lane, "branch": branch, "detail": before.detail}
+        porcelain = self._git("status", "--porcelain")
+        if porcelain.ok and porcelain.stdout:
+            return {
+                "action": "dirty",
+                "lane": lane,
+                "branch": branch,
+                "before": before.stdout,
+                "after": before.stdout,
+                "detail": "worktree has uncommitted changes; refusing to converge",
+            }
+        tracking = f"refs/remotes/{self.remote}/{branch}"
+        exists = self._git("ls-remote", "--exit-code", self.remote, f"refs/heads/{branch}")
+        if not exists.ok:
+            if exists.returncode == 2:
+                return {
+                    "action": "no-branch",
+                    "lane": lane,
+                    "branch": branch,
+                    "before": before.stdout,
+                    "after": before.stdout,
+                }
+            return {
+                "action": "error",
+                "lane": lane,
+                "branch": branch,
+                "before": before.stdout,
+                "detail": f"ls-remote: {exists.detail}",
+            }
+        fetched = self._retry_once(
+            "fetch", "--quiet", self.remote, f"+refs/heads/{branch}:{tracking}"
+        )
+        if not fetched.ok:
+            return {
+                "action": "error",
+                "lane": lane,
+                "branch": branch,
+                "before": before.stdout,
+                "detail": f"git fetch: {fetched.detail}",
+            }
+        hub_sha = self._git("rev-parse", tracking)
+        if not hub_sha.ok:
+            return {
+                "action": "error",
+                "lane": lane,
+                "branch": branch,
+                "before": before.stdout,
+                "detail": f"resolving {tracking}: {hub_sha.detail}",
+            }
+        if before.stdout == hub_sha.stdout:
+            return {
+                "action": "noop",
+                "lane": lane,
+                "branch": branch,
+                "before": before.stdout,
+                "after": before.stdout,
+                "hub_sha": hub_sha.stdout,
+            }
+        if self._git("merge-base", "--is-ancestor", "HEAD", tracking).ok:
+            merged = self._git("merge", "--ff-only", "--quiet", tracking)
+            if not merged.ok:
+                return {
+                    "action": "error",
+                    "lane": lane,
+                    "branch": branch,
+                    "before": before.stdout,
+                    "hub_sha": hub_sha.stdout,
+                    "detail": f"fast-forward: {merged.detail}",
+                }
+            after = self._git("rev-parse", "HEAD")
+            return {
+                "action": "fast-forward",
+                "lane": lane,
+                "branch": branch,
+                "before": before.stdout,
+                "after": after.stdout if after.ok else None,
+                "hub_sha": hub_sha.stdout,
+            }
+        if self._git("merge-base", "--is-ancestor", tracking, "HEAD").ok:
+            return {
+                "action": "ahead",
+                "lane": lane,
+                "branch": branch,
+                "before": before.stdout,
+                "after": before.stdout,
+                "hub_sha": hub_sha.stdout,
+            }
+        # Diverged. Safe to reset only if every commit HEAD has that the hub
+        # lacks is already reachable from a preserved ref (e.g. an admin
+        # rebuild's refs/okf/preview-before/<ts>) — that ref is what makes
+        # this checkout's own history recoverable independent of a reset.
+        # Those refs live on the hub, not yet in this checkout, so fetch
+        # them by the same glob the caller will match against. A fetch
+        # failure here is not fatal — a stale but present local copy of an
+        # immutable, timestamp-named preserve ref is still safe to use —
+        # but it's surfaced in the detail below rather than silently
+        # falling through, so a caller can tell "no preserve refs exist
+        # yet" apart from "couldn't reach the hub to check".
+        fetch_problems: list[str] = []
+        for glob in preserve_ref_globs:
+            fetched_glob = self._git("fetch", "--quiet", self.remote, f"+{glob}:{glob}")
+            if not fetched_glob.ok:
+                fetch_problems.append(f"{glob}: {fetched_glob.detail}")
+        safe = self._diverged_commits_are_preserved(tracking, preserve_ref_globs)
+        problem_suffix = (
+            f" (preserve-ref fetch problems: {'; '.join(fetch_problems)})" if fetch_problems else ""
+        )
+        if safe is None:
+            return {
+                "action": "diverged",
+                "lane": lane,
+                "branch": branch,
+                "before": before.stdout,
+                "after": before.stdout,
+                "hub_sha": hub_sha.stdout,
+                "detail": (
+                    "diverged; could not evaluate preserve refs, refusing to reset" + problem_suffix
+                ),
+            }
+        if not safe:
+            return {
+                "action": "diverged",
+                "lane": lane,
+                "branch": branch,
+                "before": before.stdout,
+                "after": before.stdout,
+                "hub_sha": hub_sha.stdout,
+                "detail": (
+                    "diverged from the hub and this checkout holds commits not reachable "
+                    "from any preserve ref; refusing to reset" + problem_suffix
+                ),
+            }
+        rescue_ref = f"{rescue_ref_prefix}/{before.stdout}"
+        rescued = self._git("update-ref", rescue_ref, before.stdout)
+        if not rescued.ok:
+            return {
+                "action": "diverged",
+                "lane": lane,
+                "branch": branch,
+                "before": before.stdout,
+                "after": before.stdout,
+                "hub_sha": hub_sha.stdout,
+                "detail": f"could not record rescue ref before reset: {rescued.detail}",
+            }
+        reset = self._git("reset", "--hard", "--quiet", tracking)
+        if not reset.ok:
+            return {
+                "action": "error",
+                "lane": lane,
+                "branch": branch,
+                "before": before.stdout,
+                "hub_sha": hub_sha.stdout,
+                "detail": f"reset --hard {tracking}: {reset.detail}",
+                "rescue_ref": rescue_ref,
+            }
+        return {
+            "action": "reset",
+            "lane": lane,
+            "branch": branch,
+            "before": before.stdout,
+            "after": hub_sha.stdout,
+            "hub_sha": hub_sha.stdout,
+            "rescue_ref": rescue_ref,
+        }
+
+    def _diverged_commits_are_preserved(
+        self, tracking: str, preserve_ref_globs: tuple[str, ...]
+    ) -> bool | None:
+        """True if every commit unique to HEAD is reachable from some preserve ref.
+
+        Returns ``None`` (never resets) when no globs were configured, or a
+        glob resolves no refs, or the rev-list itself fails — an unproven
+        "safe" never defaults to a destructive reset.
+        """
+        if not preserve_ref_globs:
+            return None
+        preserve_args: list[str] = []
+        for glob in preserve_ref_globs:
+            listed = self._git("for-each-ref", "--format=%(refname)", glob)
+            if listed.ok and listed.stdout:
+                preserve_args.extend(listed.stdout.splitlines())
+        if not preserve_args:
+            return None
+        unreached = self._git("rev-list", "HEAD", f"^{tracking}", "--not", *preserve_args)
+        if not unreached.ok:
+            return None
+        return unreached.stdout.strip() == ""
 
     def status(self, upstream_ref: str = "origin/main") -> dict[str, Any]:
         """Repository state for the staleness/provenance signal: sha, branch, dirty.
