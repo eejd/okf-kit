@@ -161,7 +161,11 @@ class SyncCoordinator:
             result = writer.converge(branch, lane=lane, preserve_ref_globs=preserve_ref_globs)
             outcome = SyncOutcome.from_converge(result)
             state.last_outcome = outcome
-            state.last_checked = now
+            # A fresh timestamp, not the pre-acquire `now` above: converge()
+            # itself can take a while (a real fetch), and staking
+            # last_checked to when the check STARTED rather than when it
+            # FINISHED would let the next interval start counting early.
+            state.last_checked = time.monotonic()
             return outcome
         finally:
             state.lock.release()

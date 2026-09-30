@@ -139,6 +139,37 @@ def test_converge_diverged_without_preserve_refs_refuses(tmp_path: Path):
     assert _run(review, "rev-parse", "HEAD") == local_sha
 
 
+def test_converge_diverged_with_preserve_glob_matching_nothing_refuses(tmp_path: Path):
+    """A preserve glob is configured (the ordinary preview-lane case) but
+    the hub has never recorded a matching ref yet — the first-ever
+    divergence after a fresh deployment, before any admin rebuild has run.
+    Must refuse exactly like the no-globs-configured case, never treat
+    "nothing to check" as "safe"."""
+    hub, clone = _hub_and_clone(tmp_path, branch="main")
+    _run(hub, "update-ref", "refs/heads/preview", "refs/heads/main")
+    subprocess.run(
+        ["git", "clone", "--branch", "preview", str(hub), str(clone.parent / "review")],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    review = clone.parent / "review"
+    (review / "draft.md").write_text("# draft\n", encoding="utf-8")
+    _run(review, "add", ".")
+    _run(review, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "draft")
+    local_sha = _run(review, "rev-parse", "HEAD")
+    _advance_hub(hub, tmp_path, "preview", "rebuilt.md", tag="rebuild")
+    writer = GitWriter.discover(review)
+    assert writer is not None
+    # No refs/okf/preview-before/* ref exists anywhere on the hub.
+    assert _run(hub, "for-each-ref", "refs/okf/preview-before/*") == ""
+    result = writer.converge(
+        "preview", lane="preview", preserve_ref_globs=("refs/okf/preview-before/*",)
+    )
+    assert result["action"] == "diverged"
+    assert _run(review, "rev-parse", "HEAD") == local_sha
+
+
 def test_converge_diverged_resets_when_preserved(tmp_path: Path):
     """A serving checkout whose HEAD is a preview tip an admin rebuild has
     since recorded and moved past (ADR-0509 F4's refs/okf/preview-before/)
@@ -194,6 +225,33 @@ def test_converge_diverged_resets_when_preserved(tmp_path: Path):
     # rescue ref too, independent of the hub's preview-before record.
     assert result["rescue_ref"] is not None
     assert _run(review, "rev-parse", result["rescue_ref"]) == old_tip
+
+    # A SECOND admin rebuild, chained on top of the first: the checkout
+    # (now at new_tip == B) must reset again onto a fresh, unrelated tip
+    # C, with B itself (not A) recorded as the preserve ref this time.
+    # This exercises that each rebuild's own preview-before entry is what
+    # the safety check keys on — not something left over from the first.
+    _run(hub, "update-ref", f"refs/okf/preview-before/{int(time.time()) + 1}", new_tip)
+    rebuild2 = tmp_path / "rebuild-source-2"
+    subprocess.run(
+        ["git", "clone", "--branch", "main", str(hub), str(rebuild2)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    (rebuild2 / "rebuilt2.md").write_text("# rebuilt again\n", encoding="utf-8")
+    _run(rebuild2, "add", ".")
+    _run(rebuild2, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "rebuild2")
+    newest_tip = _run(rebuild2, "rev-parse", "HEAD")
+    _run(rebuild2, "push", "--force", "origin", "HEAD:refs/heads/preview")
+
+    second_result = writer.converge(
+        "preview", lane="preview", preserve_ref_globs=("refs/okf/preview-before/*",)
+    )
+    assert second_result["action"] == "reset"
+    assert second_result["after"] == newest_tip
+    assert _run(review, "rev-parse", "HEAD") == newest_tip
+    assert _run(review, "rev-parse", second_result["rescue_ref"]) == new_tip
 
 
 def test_remote_branch_sha_matches_hub(tmp_path: Path):

@@ -1203,7 +1203,21 @@ def _register_resources(server: FastMCP, reg: BundleRegistry) -> None:
     this module exists to avoid. Reads were already effectively live (each
     registered reader re-read its file from disk on every call); this only
     extends "live" to which URIs exist at all.
+
+    Couples to ``FastMCP._mcp_server``, a private attribute, because the
+    public API has no supported way to replace ``resources/list``/
+    ``resources/read`` after construction. Guarded by the ``mcp>=1.9.0,<2``
+    dependency floor in pyproject.toml (a v2 is explicitly out of range);
+    within 1.x this has held from 1.9 through the 1.30 series this repo's
+    lockfile and MacPorts both pin. The assertion below turns a future
+    breakage of that coupling into a loud startup failure instead of a
+    server that silently serves an empty or stale resource list.
     """
+    assert hasattr(server, "_mcp_server") and hasattr(server._mcp_server, "list_resources"), (
+        "FastMCP's private _mcp_server surface changed shape — "
+        "_register_resources' live resources/list and resources/read "
+        "override needs updating for this mcp SDK version"
+    )
 
     async def _list() -> list[MCPResource]:
         resources: list[MCPResource] = []

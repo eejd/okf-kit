@@ -118,14 +118,13 @@ def test_sync_status_reports_convergence_fields(tmp_path: Path):
     hub, clone = _hub_and_clone(tmp_path)
     _advance_hub(hub, tmp_path, "b.md", tag="ff")
     server = make_server({"kb": clone}, sync_branch="main", refresh_route=False)
-    status = asyncio.run(server.call_tool("sync_status", {"bundle": "kb"}))
-    payload = status[1] if isinstance(status, tuple) else status
-    # call_tool returns (content_blocks, structured_result) for a dict-returning tool.
-    data = payload if isinstance(payload, dict) else payload.get("result", payload)
-    assert data.get("sync_action") == "fast-forward"
-    assert data.get("hub_sha") == _run(clone, "rev-parse", "HEAD")
-    assert data.get("last_sync_at") is not None
-    assert data.get("last_sync_error") is None
+    # FastMCP.call_tool on a dict-returning tool: (content_blocks, structured_result).
+    _content, data = asyncio.run(server.call_tool("sync_status", {"bundle": "kb"}))
+    assert isinstance(data, dict)
+    assert data["sync_action"] == "fast-forward"
+    assert data["hub_sha"] == _run(clone, "rev-parse", "HEAD")
+    assert data["last_sync_at"] is not None
+    assert data["last_sync_error"] is None
 
 
 def test_tool_sync_status_no_coordinator_omits_sync_fields(tmp_path: Path):

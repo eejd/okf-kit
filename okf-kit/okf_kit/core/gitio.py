@@ -506,10 +506,21 @@ class GitWriter:
         # rebuild's refs/okf/preview-before/<ts>) — that ref is what makes
         # this checkout's own history recoverable independent of a reset.
         # Those refs live on the hub, not yet in this checkout, so fetch
-        # them by the same glob the caller will match against.
+        # them by the same glob the caller will match against. A fetch
+        # failure here is not fatal — a stale but present local copy of an
+        # immutable, timestamp-named preserve ref is still safe to use —
+        # but it's surfaced in the detail below rather than silently
+        # falling through, so a caller can tell "no preserve refs exist
+        # yet" apart from "couldn't reach the hub to check".
+        fetch_problems: list[str] = []
         for glob in preserve_ref_globs:
-            self._git("fetch", "--quiet", self.remote, f"+{glob}:{glob}")
+            fetched_glob = self._git("fetch", "--quiet", self.remote, f"+{glob}:{glob}")
+            if not fetched_glob.ok:
+                fetch_problems.append(f"{glob}: {fetched_glob.detail}")
         safe = self._diverged_commits_are_preserved(tracking, preserve_ref_globs)
+        problem_suffix = (
+            f" (preserve-ref fetch problems: {'; '.join(fetch_problems)})" if fetch_problems else ""
+        )
         if safe is None:
             return {
                 "action": "diverged",
@@ -518,7 +529,9 @@ class GitWriter:
                 "before": before.stdout,
                 "after": before.stdout,
                 "hub_sha": hub_sha.stdout,
-                "detail": "diverged; could not evaluate preserve refs, refusing to reset",
+                "detail": (
+                    "diverged; could not evaluate preserve refs, refusing to reset" + problem_suffix
+                ),
             }
         if not safe:
             return {
@@ -530,7 +543,7 @@ class GitWriter:
                 "hub_sha": hub_sha.stdout,
                 "detail": (
                     "diverged from the hub and this checkout holds commits not reachable "
-                    "from any preserve ref; refusing to reset"
+                    "from any preserve ref; refusing to reset" + problem_suffix
                 ),
             }
         rescue_ref = f"{rescue_ref_prefix}/{before.stdout}"
