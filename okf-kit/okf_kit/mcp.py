@@ -1213,7 +1213,11 @@ def _register_resources(server: FastMCP, reg: BundleRegistry) -> None:
     breakage of that coupling into a loud startup failure instead of a
     server that silently serves an empty or stale resource list.
     """
-    assert hasattr(server, "_mcp_server") and hasattr(server._mcp_server, "list_resources"), (
+    assert (
+        hasattr(server, "_mcp_server")
+        and hasattr(server._mcp_server, "list_resources")
+        and hasattr(server._mcp_server, "read_resource")
+    ), (
         "FastMCP's private _mcp_server surface changed shape — "
         "_register_resources' live resources/list and resources/read "
         "override needs updating for this mcp SDK version"
