@@ -38,12 +38,14 @@ from __future__ import annotations
 import json
 import sys
 import time
-from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.lowlevel.helper_types import ReadResourceContents
+from mcp.types import Resource as MCPResource
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
@@ -53,6 +55,7 @@ from okf_kit.core.gitio import GitWriter
 from okf_kit.core.links import GraphEdge, concept_graph_edges, iter_concept_files, resolve_cid_path
 from okf_kit.core.parse import parse_concept
 from okf_kit.core.search import Hit, build_index, search_page
+from okf_kit.core.sync import DEFAULT_REVALIDATE_SECONDS, SyncCoordinator
 from okf_kit.core.templates import create_concept, init_bundle
 from okf_kit.core.validate import validate_bundle
 
@@ -79,22 +82,14 @@ def _canonical_upstream_ref(upstream_ref: str) -> tuple[str, str]:
         or part.endswith(".lock")
         for part in parts
     )
-    forbidden = any(
-        ord(char) <= 32 or ord(char) == 127 or char in "~^:?*[\\"
-        for char in short
-    )
-    if (
-        len(parts) < 2
-        or invalid_component
-        or ".." in short
-        or "@{" in short
-        or forbidden
-    ):
+    forbidden = any(ord(char) <= 32 or ord(char) == 127 or char in "~^:?*[\\" for char in short)
+    if len(parts) < 2 or invalid_component or ".." in short or "@{" in short or forbidden:
         raise ValueError(
             "upstream_ref must be a canonical remote branch ref: "
             "REMOTE/BRANCH or refs/remotes/REMOTE/BRANCH"
         )
     return f"refs/remotes/{short}", "/".join(parts[1:])
+
 
 _CREATE_DESC = tool_descriptions.CREATE_DESC
 _GRAPH_DESC = tool_descriptions.GRAPH_DESC
@@ -162,6 +157,7 @@ def _lane_suffix(
         "use this bundle's review-lane MCP endpoint instead of writing here.]"
     )
 
+
 BundleName = Annotated[
     str,
     Field(
@@ -197,8 +193,7 @@ MetadataFilter = Annotated[
     dict[str, Any] | None,
     Field(
         description=(
-            "Optional exact frontmatter filters; a scalar matches membership in "
-            "list-valued facets."
+            "Optional exact frontmatter filters; a scalar matches membership in list-valued facets."
         )
     ),
 ]
@@ -517,22 +512,28 @@ def tool_graph_links(
                         continue
                     outgoing = edge.source_bundle == bundle and edge.source_cid == concept_id
                     incoming = edge.target_bundle == bundle and edge.target_cid == concept_id
-                    touches = (
-                        (direction in {"outgoing", "both"} and outgoing)
-                        or (direction in {"incoming", "both"} and incoming)
+                    touches = (direction in {"outgoing", "both"} and outgoing) or (
+                        direction in {"incoming", "both"} and incoming
                     )
                     if touches and (allowed is None or edge.relation in allowed):
                         selected.add(edge)
         edges = [edge.to_dict() for edge in sorted(selected)]
         ok = True
         return {
-            "bundle": bundle, "concept_id": concept_id,
-            "direction": direction, "edges": edges,
+            "bundle": bundle,
+            "concept_id": concept_id,
+            "direction": direction,
+            "edges": edges,
         }
     finally:
         _log_tool_call(
-            "graph_links", started_at, ok, bundle=bundle, concept_id=concept_id,
-            direction=direction, n_edges=len(selected),
+            "graph_links",
+            started_at,
+            ok,
+            bundle=bundle,
+            concept_id=concept_id,
+            direction=direction,
+            n_edges=len(selected),
         )
 
 
@@ -663,8 +664,7 @@ def tool_create_concept(
             forbidden = {"verified", "trust"} & extra_fm.keys()
             if forbidden:
                 raise ValueError(
-                    "draft authoring rejects caller trust fields: "
-                    + ", ".join(sorted(forbidden))
+                    "draft authoring rejects caller trust fields: " + ", ".join(sorted(forbidden))
                 )
             extra_fm["status"] = "draft"
             extra_fm["generated"] = {
@@ -683,7 +683,10 @@ def tool_create_concept(
         )
         result: dict[str, Any] = {"created": True, "cid": cid, "path": str(path)}
         git_outcome = _git_commit_result(
-            git, bundle, [path], f"okf-mcp: create concept {cid}",
+            git,
+            bundle,
+            [path],
+            f"okf-mcp: create concept {cid}",
             expected_branch=expected_branch,
         )
         _raise_if_write_failed(git_outcome)
@@ -723,7 +726,10 @@ def tool_init_bundle(
         path = init_bundle(reg.get(bundle), okf_version=okf_version)
         result: dict[str, Any] = {"initialized": True, "path": str(path)}
         git_outcome = _git_commit_result(
-            git, bundle, [path], f"okf-mcp: init bundle {bundle}",
+            git,
+            bundle,
+            [path],
+            f"okf-mcp: init bundle {bundle}",
             expected_branch=expected_branch,
         )
         _raise_if_write_failed(git_outcome)
@@ -753,8 +759,19 @@ def tool_sync_status(
     upstream_ref: str = "origin/main",
     expected_write_branch: str | None = None,
     git_commit: bool | None = None,
+    coordinator: SyncCoordinator | None = None,
 ) -> dict[str, Any]:
-    """Report a bundle's git provenance (sha/branch/dirty) for staleness checks."""
+    """Report a bundle's git provenance (sha/branch/dirty) for staleness checks.
+
+    With ``coordinator`` set, also reports the last hub-convergence outcome
+    (:mod:`okf_kit.core.sync`) — the served sha this checkout last converged
+    to, when, and whether that convergence hit a problem (``diverged``,
+    ``dirty``, ``error``). ``served_sha``/``reconciliation`` in the base
+    ``writer.status()`` result reflect the checkout's OWN tracking ref,
+    which only convergence (or an explicit fetch) advances — the caller
+    wiring this into ``make_server`` runs a revalidate check before this
+    call, so these two views agree in practice.
+    """
     if git_commit:
         write_mode = "draft"
         if lane == "stable":
@@ -775,6 +792,20 @@ def tool_sync_status(
         }
         if writer is not None:
             result.update(writer.status(upstream_ref))
+        if coordinator is not None:
+            outcome = coordinator.last_outcome(bundle)
+            result.update(
+                outcome.to_dict()
+                if outcome is not None
+                else {
+                    "sync_action": None,
+                    "sync_lane": None,
+                    "sync_branch": None,
+                    "last_sync_at": None,
+                    "hub_sha": None,
+                    "last_sync_error": None,
+                }
+            )
         ok = True
         return result
     finally:
@@ -805,6 +836,9 @@ def make_server(
     upstream_ref: str = "origin/main",
     publication_profile: str | None = None,
     git_commit: bool | None = None,
+    sync_branch: str | None = None,
+    sync_revalidate: float = DEFAULT_REVALIDATE_SECONDS,
+    refresh_route: bool = True,
 ) -> FastMCP:
     """Build a FastMCP server with tools + per-concept ``okf://`` resources.
 
@@ -825,6 +859,19 @@ def make_server(
         upstream_ref: Canonical remote branch ref compared with the served checkout.
         publication_profile: Optional governed-publication validation dialect.
         git_commit: Deprecated compatibility alias for draft/preview mode.
+        sync_branch: Hub branch this server's bundles converge to
+              (:mod:`okf_kit.core.sync`) so a hub advance is picked up
+              without a restart: fast-forwarded, or — preview lane only —
+              safely reset past an admin rebuild. Defaults to the stable
+              branch resolved from ``upstream_ref`` for the stable lane, or
+              ``expected_write_branch`` for the preview lane.
+        sync_revalidate: Seconds between the self-healing hub-freshness
+              check every read tool call makes (0 disables it — rely
+              entirely on the refresh route or an external poller).
+        refresh_route: Serve ``POST /okf/refresh`` (HTTP transports only;
+              a no-op under stdio) so an external trigger — a hub's
+              ``reference-transaction`` hook — can request an immediate
+              sync instead of waiting out ``sync_revalidate``.
     """
     if write_mode not in {"disabled", "draft"}:
         raise ValueError("write_mode must be disabled or draft")
@@ -853,6 +900,60 @@ def make_server(
     reg = BundleRegistry(bundles)
     git = GitBackend(reg)
     write_git = git if write_mode == "draft" else None
+
+    # -- hub->serve convergence (okf_kit.core.sync) --------------------
+    #
+    # A single global branch/lane, matching upstream_ref/lane/
+    # expected_write_branch above: production registers exactly one bundle
+    # per process (one OKF_INSTANCES entry -> one container), so there is
+    # no per-bundle divergence to account for here.
+    sync_branch_resolved = sync_branch or (
+        expected_write_branch if lane == "preview" and expected_write_branch else stable_branch
+    )
+    # refs/okf/preview-before/<ts> is where an admin rebuild (ADR-0509 F4)
+    # records a preview tip it is about to move past — only the preview
+    # lane is ever rewritten that way, so only it may reset onto a
+    # diverged hub tip; the stable lane never resets, only fast-forwards.
+    preserve_ref_globs: tuple[str, ...] = (
+        ("refs/okf/preview-before/*",) if lane == "preview" else ()
+    )
+    sync_coordinator = SyncCoordinator()
+
+    def _revalidate(bundle: str) -> None:
+        """Self-healing backstop, called at the top of every read tool.
+
+        A no-op for a bundle with no discoverable git remote (most test
+        fixtures, or a deployment that genuinely isn't hub-backed) and for
+        the common case where the last check is still fresh — see
+        SyncCoordinator.revalidate_if_stale.
+        """
+        writer = git.writer_for(bundle)
+        if writer is None:
+            return
+        sync_coordinator.revalidate_if_stale(
+            writer,
+            bundle,
+            branch=sync_branch_resolved,
+            lane=lane,
+            preserve_ref_globs=preserve_ref_globs,
+            interval=sync_revalidate,
+        )
+
+    # Sync once at construction, before any request is served, so a
+    # server that starts stale (e.g. restarted for a process-breaking
+    # change) doesn't wait out sync_revalidate before its first answer is
+    # current.
+    for _name in reg.names():
+        _writer = git.writer_for(_name)
+        if _writer is not None:
+            sync_coordinator.sync_now(
+                _writer,
+                _name,
+                branch=sync_branch_resolved,
+                lane=lane,
+                preserve_ref_globs=preserve_ref_globs,
+            )
+
     server = FastMCP("okf", host=host, port=port, streamable_http_path="/mcp")
     lane_suffix = _lane_suffix(lane, write_mode, expected_write_branch)
     # Separate suffix for the two tools that actually perform the write
@@ -881,9 +982,8 @@ def make_server(
         cursor: SearchCursor = None,
         response_version: SearchResponseVersion = "v1",
     ) -> dict[str, Any] | list[dict[str, Any]]:
-        return tool_search(
-            reg, bundle, query, type, tag, limit, metadata, cursor, response_version
-        )
+        _revalidate(bundle)
+        return tool_search(reg, bundle, query, type, tag, limit, metadata, cursor, response_version)
 
     @server.tool(
         name="read_concept",
@@ -898,6 +998,7 @@ def make_server(
         token_budget: TokenBudget = 8000,
         direction: Direction = "both",
     ) -> str:
+        _revalidate(bundle)
         return tool_read_concept(reg, bundle, concept_id, depth, token_budget, direction)
 
     @server.tool(
@@ -912,6 +1013,10 @@ def make_server(
         direction: Direction = "both",
         relation: RelationFilter = None,
     ) -> dict[str, Any]:
+        # Traverses every registered bundle (tool_graph_links walks reg.names()),
+        # not only the seed bundle, so every one needs to be current.
+        for _b in reg.names():
+            _revalidate(_b)
         return tool_graph_links(reg, bundle, concept_id, direction, relation)
 
     @server.tool(
@@ -921,6 +1026,7 @@ def make_server(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
     )
     def _validate(bundle: BundleName) -> dict[str, Any]:
+        _revalidate(bundle)
         return tool_validate(reg, bundle, publication_profile)
 
     def _create_concept(
@@ -953,7 +1059,10 @@ def make_server(
 
     def _init_bundle(bundle: BundleName, okf_version: OkfVersion = "0.2") -> dict[str, Any]:
         return tool_init_bundle(
-            reg, bundle, okf_version, git=write_git,
+            reg,
+            bundle,
+            okf_version,
+            git=write_git,
             expected_branch=expected_write_branch,
         )
 
@@ -963,7 +1072,9 @@ def make_server(
             title="Create concept",
             description=_CREATE_DESC + write_lane_suffix,
             annotations=ToolAnnotations(
-                readOnlyHint=False, destructiveHint=False, idempotentHint=False,
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=False,
                 openWorldHint=False,
             ),
         )(_create_concept)
@@ -972,7 +1083,9 @@ def make_server(
             title="Initialize bundle",
             description=_INIT_DESC + write_lane_suffix,
             annotations=ToolAnnotations(
-                readOnlyHint=False, destructiveHint=True, idempotentHint=True,
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=True,
                 openWorldHint=False,
             ),
         )(_init_bundle)
@@ -984,6 +1097,8 @@ def make_server(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
     )
     def _list_bundles() -> list[dict[str, Any]]:
+        for _b in reg.names():
+            _revalidate(_b)
         return tool_list_bundles(reg)
 
     @server.tool(
@@ -993,38 +1108,155 @@ def make_server(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
     )
     def _sync_status(bundle: BundleName) -> dict[str, Any]:
+        _revalidate(bundle)
         return tool_sync_status(
-            reg, git, bundle, write_mode=write_mode, lane=lane,
-            upstream_ref=upstream_ref, expected_write_branch=expected_write_branch,
+            reg,
+            git,
+            bundle,
+            write_mode=write_mode,
+            lane=lane,
+            upstream_ref=upstream_ref,
+            expected_write_branch=expected_write_branch,
             git_commit=git_commit,
+            coordinator=sync_coordinator,
         )
 
+    sync_config = _SyncConfig(
+        branch=sync_branch_resolved,
+        lane=lane,
+        preserve_ref_globs=preserve_ref_globs,
+    )
+    if refresh_route:
+        _register_refresh_route(server, reg, git, sync_coordinator, sync_config)
     _register_resources(server, reg)
     return server
 
 
-def _register_resources(server: FastMCP, reg: BundleRegistry) -> None:
-    def make_reader(path: Path) -> Callable[[], str]:
-        # Static resource readers must take no params (FastMCP matches URI params
-        # to function params); close over the path instead.
-        def _reader() -> str:
-            return path.read_text(encoding="utf-8")
+@dataclass(frozen=True)
+class _SyncConfig:
+    """The three :func:`make_server`-level settings a per-request sync needs.
 
-        return _reader
+    Bundled so :func:`_register_refresh_route` doesn't have to thread three
+    separate closure variables through — not exposed outside this module.
+    """
 
-    for name in reg.names():
-        root = reg.get(name)
-        for md in iter_concept_files(root):
-            concept = parse_concept(md, root)
-            if concept.reserved is not None:
+    branch: str
+    lane: str
+    preserve_ref_globs: tuple[str, ...]
+
+
+def _register_refresh_route(
+    server: FastMCP,
+    reg: BundleRegistry,
+    git: GitBackend,
+    coordinator: SyncCoordinator,
+    sync_config: _SyncConfig,
+) -> None:
+    """``POST /okf/refresh`` — an external trigger's fast path to convergence.
+
+    Meant for a hub's ``reference-transaction`` hook to call immediately
+    after a committed ref update, rather than every server waiting out its
+    own ``--sync-revalidate`` interval. A no-op (200, ``{"synced": []}``)
+    for any bundle with no discoverable git remote. Ignored under stdio
+    transport (custom_route only applies to HTTP transports; FastMCP simply
+    never mounts it there).
+
+    Runs the actual git work on a worker thread (``anyio.to_thread``) so a
+    slow or unreachable hub does not block the event loop other requests
+    (including in-flight MCP tool calls) share.
+    """
+    import anyio
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+
+    async def _refresh(request: Request) -> JSONResponse:
+        synced: list[dict[str, Any]] = []
+        for name in reg.names():
+            writer = git.writer_for(name)
+            if writer is None:
                 continue
-            cid = concept.cid
-            uri = f"okf://{name}/concepts/{cid}.md"
-            title_value = concept.frontmatter.get("title")
-            desc_value = concept.frontmatter.get("description")
-            title = title_value if isinstance(title_value, str) else cid
-            description = desc_value if isinstance(desc_value, str) else ""
-            server.resource(uri, name=title, description=description)(make_reader(concept.path))
+            outcome = await anyio.to_thread.run_sync(
+                lambda w=writer, n=name: coordinator.sync_now(
+                    w,
+                    n,
+                    branch=sync_config.branch,
+                    lane=sync_config.lane,
+                    preserve_ref_globs=sync_config.preserve_ref_globs,
+                )
+            )
+            synced.append({"bundle": name, **outcome.to_dict()})
+        return JSONResponse({"synced": synced})
+
+    server.custom_route("/okf/refresh", methods=["POST"], name="okf_refresh")(_refresh)
+
+
+def _register_resources(server: FastMCP, reg: BundleRegistry) -> None:
+    """Wire ``resources/list`` and ``resources/read`` to re-scan the disk live.
+
+    Overrides the two lowlevel MCP handlers directly (the same mechanism
+    ``FastMCP._setup_handlers`` itself uses — see
+    ``mcp.server.lowlevel.server.Server.list_resources``/``read_resource``)
+    rather than the static per-file registration this replaced: a static
+    registration is fixed at server construction, so a concept created,
+    renamed or removed by a later hub sync would never show up (new) or
+    would 404 (removed) without a process restart — exactly the restart
+    this module exists to avoid. Reads were already effectively live (each
+    registered reader re-read its file from disk on every call); this only
+    extends "live" to which URIs exist at all.
+    """
+
+    async def _list() -> list[MCPResource]:
+        resources: list[MCPResource] = []
+        for name in reg.names():
+            root = reg.get(name)
+            for md in iter_concept_files(root):
+                concept = parse_concept(md, root)
+                if concept.reserved is not None:
+                    continue
+                cid = concept.cid
+                title_value = concept.frontmatter.get("title")
+                desc_value = concept.frontmatter.get("description")
+                resources.append(
+                    MCPResource(
+                        uri=f"okf://{name}/concepts/{cid}.md",  # type: ignore[arg-type]
+                        name=title_value if isinstance(title_value, str) else cid,
+                        description=desc_value if isinstance(desc_value, str) else None,
+                        mimeType="text/markdown",
+                    )
+                )
+        return resources
+
+    async def _read(uri: Any) -> list[ReadResourceContents]:
+        text = str(uri)
+        prefix, _, rest = text.partition("://")
+        bundle, _, tail = rest.partition("/concepts/")
+        if prefix != "okf" or not bundle or not tail.endswith(".md"):
+            raise ValueError(f"not an okf concept resource: {text!r}")
+        cid = tail[: -len(".md")]
+        try:
+            root = reg.get(bundle)
+        except KeyError as exc:
+            raise ValueError(str(exc)) from exc
+        path = resolve_cid_path(root, cid)
+        if path is None:
+            raise ValueError(f"unknown concept resource: {text!r}")
+        return [
+            ReadResourceContents(
+                content=path.read_text(encoding="utf-8"), mime_type="text/markdown"
+            )
+        ]
+
+    # Override the lowlevel Server's request handlers directly — the same
+    # decorator FastMCP._setup_handlers used to wire its OWN (static)
+    # list_resources/read_resource; see that method for the pattern this
+    # mirrors. Also rebind the FastMCP-level convenience methods
+    # (server.list_resources()/server.read_resource(), used by callers that
+    # talk to the Python object directly rather than over the wire) to the
+    # same live functions, so both entry points agree.
+    server._mcp_server.list_resources()(_list)
+    server._mcp_server.read_resource()(_read)
+    server.list_resources = _list  # type: ignore[method-assign]
+    server.read_resource = _read  # type: ignore[method-assign]
 
 
 def _hit_dict(hit: Hit) -> dict[str, Any]:
@@ -1108,12 +1340,13 @@ def main(argv: list[str] | None = None) -> int:
         choices=["disabled", "draft"],
         default="disabled",
         help=(
-            "Write policy: disabled omits mutating tools; draft exposes "
-            "reviewed-preview authoring."
+            "Write policy: disabled omits mutating tools; draft exposes reviewed-preview authoring."
         ),
     )
     parser.add_argument(
-        "--lane", choices=["stable", "preview"], default="stable",
+        "--lane",
+        choices=["stable", "preview"],
+        default="stable",
         help="Authority lane reported by sync_status; draft writes require preview.",
     )
     parser.add_argument(
@@ -1125,7 +1358,8 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
-        "--upstream-ref", default="origin/main",
+        "--upstream-ref",
+        default="origin/main",
         help=(
             "Canonical remote branch ref used for reconciliation: REMOTE/BRANCH or "
             "refs/remotes/REMOTE/BRANCH (default origin/main). Git revision expressions "
@@ -1133,7 +1367,9 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
-        "--publication-profile", choices=["hive"], default=None,
+        "--publication-profile",
+        choices=["hive"],
+        default=None,
         help="Optional governed-publication validation profile.",
     )
     parser.add_argument(
@@ -1149,6 +1385,34 @@ def main(argv: list[str] | None = None) -> int:
             "the tool call."
         ),
     )
+    parser.add_argument(
+        "--sync-branch",
+        default=None,
+        help=(
+            "Hub branch this server's bundles converge to on every request (see "
+            "--sync-revalidate) and on the refresh route, without a restart. Defaults "
+            "to the stable branch resolved from --upstream-ref for --lane stable, or "
+            "--expected-write-branch for --lane preview."
+        ),
+    )
+    parser.add_argument(
+        "--sync-revalidate",
+        type=float,
+        default=DEFAULT_REVALIDATE_SECONDS,
+        help=(
+            "Seconds between the self-healing hub-freshness check every read tool call "
+            f"makes (default {DEFAULT_REVALIDATE_SECONDS:g}). 0 disables it."
+        ),
+    )
+    parser.add_argument(
+        "--no-refresh-route",
+        dest="refresh_route",
+        action="store_false",
+        help=(
+            "Disable POST /okf/refresh (HTTP transports only). By default a hub's "
+            "reference-transaction hook can POST there for an immediate sync."
+        ),
+    )
     args = parser.parse_args(argv)
     transport: str = _TRANSPORT_ALIASES.get(args.transport, args.transport)
     bundles = [_parse_bundle_arg(b) for b in args.bundles]
@@ -1159,11 +1423,18 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
     server = make_server(
-        bundles, host=args.host, port=args.port, write_mode=args.write_mode,
-        lane=args.lane, expected_write_branch=args.expected_write_branch,
+        bundles,
+        host=args.host,
+        port=args.port,
+        write_mode=args.write_mode,
+        lane=args.lane,
+        expected_write_branch=args.expected_write_branch,
         upstream_ref=args.upstream_ref,
         publication_profile=args.publication_profile,
         git_commit=True if args.git_commit else None,
+        sync_branch=args.sync_branch,
+        sync_revalidate=args.sync_revalidate,
+        refresh_route=args.refresh_route,
     )
     server.run(transport=transport)  # type: ignore[arg-type]
     return 0
