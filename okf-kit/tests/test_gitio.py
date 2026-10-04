@@ -285,6 +285,72 @@ def test_create_concept_git_mode_rejects_verified_before_write(tmp_path: Path):
     assert not (bundle / "verified.md").exists()
 
 
+HIVE_FIELDS = {
+    "governance": "proposed",
+    "implementation": "planned",
+    "applicability": ["v1"],
+    "hive": "knowledge-hive",
+    "owner_repo": "knowledge-hive",
+    "authority": "current",
+}
+
+
+def test_create_concept_hive_profile_rejects_missing_fields_in_one_error(tmp_path: Path):
+    _, bundle = _hub_and_clone(tmp_path)
+    _checkout_preview(bundle)
+    reg = BundleRegistry({"kb": bundle})
+    with pytest.raises(ValueError, match="hive publication profile") as caught:
+        tool_create_concept(
+            reg, "kb", "incomplete", "Plan", "T", "d", RICH_BODY,
+            extra={"governance": "bogus"}, git=GitBackend(reg),
+            expected_branch="preview", publication_profile="hive",
+        )
+    message = str(caught.value)
+    for field in ("implementation", "applicability", "hive", "owner_repo", "authority", "governance"):
+        assert field in message
+    assert "origin" not in message.replace("origin is assigned", "")
+    assert not (bundle / "incomplete.md").exists()
+
+
+def test_create_concept_hive_profile_accepts_complete_draft_without_origin(tmp_path: Path):
+    hub, bundle = _hub_and_clone(tmp_path)
+    _checkout_preview(bundle)
+    reg = BundleRegistry({"kb": bundle})
+    res = tool_create_concept(
+        reg, "kb", "plans/ok", "Plan", "OK", "a complete draft", RICH_BODY,
+        extra=dict(HIVE_FIELDS), git=GitBackend(reg),
+        expected_branch="preview", publication_profile="hive",
+    )
+    assert res["git"]["pushed"] is True
+    fm = parse_concept(bundle / "plans" / "ok.md", bundle).frontmatter
+    assert fm["subject_id"] == "concept/kb/plans/ok"
+    assert fm["status"] == "draft" and "origin" not in fm
+
+
+def test_create_concept_hive_profile_refuses_caller_origin(tmp_path: Path):
+    _, bundle = _hub_and_clone(tmp_path)
+    _checkout_preview(bundle)
+    reg = BundleRegistry({"kb": bundle})
+    origin = {"repo": "knowledge-hive", "path": "p", "commit": "a" * 40, "digest": "sha256:" + "b" * 64}
+    with pytest.raises(ValueError, match="assigned at acceptance"):
+        tool_create_concept(
+            reg, "kb", "forged", "Plan", "T", "d", RICH_BODY,
+            extra={**HIVE_FIELDS, "origin": origin}, git=GitBackend(reg),
+            expected_branch="preview", publication_profile="hive",
+        )
+    assert not (bundle / "forged.md").exists()
+
+
+def test_create_concept_without_profile_is_unchanged(tmp_path: Path):
+    _, bundle = _hub_and_clone(tmp_path)
+    _checkout_preview(bundle)
+    reg = BundleRegistry({"kb": bundle})
+    res = tool_create_concept(
+        reg, "kb", "free", "Table", "T", "d", RICH_BODY, git=GitBackend(reg), expected_branch="preview",
+    )
+    assert res["created"] is True
+
+
 def test_create_concept_rejects_wrong_expected_branch_before_write(tmp_path: Path):
     _, bundle = _hub_and_clone(tmp_path)
     reg = BundleRegistry({"kb": bundle})

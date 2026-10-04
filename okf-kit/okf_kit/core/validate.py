@@ -228,6 +228,24 @@ def _check_hive_publication(report: Report, concept: Any) -> None:
         )
 
 
+def hive_authoring_errors(frontmatter: dict[str, Any]) -> list[str]:
+    """Hive-profile problems an author can fix before a draft is written.
+
+    This is the concept-level profile minus ``origin``: a native concept's
+    origin pins the commit that introduces it, so only the acceptance step
+    can assign it. A caller-supplied ``origin`` is refused for the same
+    reason (nothing could verify it).
+    """
+    errors = [
+        message
+        for message in _schema_errors(frontmatter, _HIVE_PROFILE_SCHEMA)
+        if message != "$: missing required property 'origin'"
+    ]
+    if "origin" in frontmatter:
+        errors.append("$.origin: assigned at acceptance, do not supply it")
+    return errors
+
+
 def _schema_errors(
     value: Any, schema: dict[str, Any], path: str = "$"
 ) -> list[str]:

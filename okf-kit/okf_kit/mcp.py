@@ -57,7 +57,7 @@ from okf_kit.core.parse import parse_concept
 from okf_kit.core.search import Hit, build_index, search_page
 from okf_kit.core.sync import DEFAULT_REVALIDATE_SECONDS, SyncCoordinator
 from okf_kit.core.templates import create_concept, init_bundle
-from okf_kit.core.validate import validate_bundle
+from okf_kit.core.validate import hive_authoring_errors, validate_bundle
 
 
 def _canonical_upstream_ref(upstream_ref: str) -> tuple[str, str]:
@@ -630,6 +630,7 @@ def tool_create_concept(
     extra: ExtraFrontmatter = None,
     git: GitBackend | None = None,
     expected_branch: str | None = None,
+    publication_profile: str | None = None,
 ) -> dict[str, Any]:
     """Create a concept via MCP, enforcing the richness floor.
 
@@ -643,6 +644,11 @@ def tool_create_concept(
     fields are rejected), and the written
     file is committed and pushed; the git outcome is reported in the result's
     ``git`` key. A failed commit or push undoes the write and fails the call.
+
+    With the ``hive`` publication profile a draft write must also carry the
+    profile's authoring fields (everything but ``origin``, which acceptance
+    assigns); ``subject_id`` defaults to ``concept/<bundle>/<cid>``. Every
+    problem is reported in one error and nothing is written.
     """
     started_at = time.monotonic()
     ok = False
@@ -671,6 +677,17 @@ def tool_create_concept(
                 "by": "process:okf-mcp",
                 "at": datetime.now(UTC).isoformat(),
             }
+            if publication_profile == "hive":
+                extra_fm.setdefault("subject_id", f"concept/{bundle}/{cid}")
+                authored: dict[str, Any] = {"type": type, "title": title, **extra_fm}
+                if description:
+                    authored["description"] = description
+                problems = hive_authoring_errors(authored)
+                if problems:
+                    raise ValueError(
+                        "concept does not meet the hive publication profile: "
+                        + "; ".join(problems)
+                    )
         path = create_concept(
             reg.get(bundle),
             cid,
@@ -1055,6 +1072,7 @@ def make_server(
             extra,
             git=write_git,
             expected_branch=expected_write_branch,
+            publication_profile=publication_profile,
         )
 
     def _init_bundle(bundle: BundleName, okf_version: OkfVersion = "0.2") -> dict[str, Any]:

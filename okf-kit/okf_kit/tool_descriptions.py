@@ -50,7 +50,11 @@ CREATE_DESC = (
     "# Definition, # Schema, # Endpoints, # API, # Steps, # Examples, or # Citations. Write "
     "concrete Markdown with relevant headings, examples, caveats, and bundle-relative links such "
     "as [Users](/tables/users.md); do not create placeholders or generic filler. Returns the "
-    "created cid and path; rejects thin bodies, invalid ids, path escapes, and existing files."
+    "created cid and path; rejects thin bodies, invalid ids, path escapes, and existing files. "
+    "When the server enforces the hive publication profile, pass governance, implementation, "
+    "applicability, hive, owner_repo and authority in `extra` (subject_id defaults to "
+    "concept/<bundle>/<cid>); origin is assigned when a human accepts the draft and must not "
+    "be supplied. Every missing or invalid field is reported in one error and nothing is written."
 )
 
 INIT_DESC = (
