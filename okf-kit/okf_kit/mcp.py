@@ -678,12 +678,18 @@ def tool_create_concept(
                 "at": datetime.now(UTC).isoformat(),
             }
             if publication_profile == "hive":
+                defaulted_subject = "subject_id" not in extra_fm
                 extra_fm.setdefault("subject_id", f"concept/{bundle}/{cid}")
                 authored: dict[str, Any] = {"type": type, "title": title, **extra_fm}
                 if description:
                     authored["description"] = description
                 problems = hive_authoring_errors(authored)
                 if problems:
+                    if defaulted_subject and any("subject_id" in item for item in problems):
+                        problems.append(
+                            "subject_id was defaulted from the bundle and cid; "
+                            "pass a lowercase subject_id explicitly"
+                        )
                     raise ValueError(
                         "concept does not meet the hive publication profile: "
                         + "; ".join(problems)

@@ -239,11 +239,15 @@ def hive_authoring_errors(frontmatter: dict[str, Any]) -> list[str]:
     errors = [
         message
         for message in _schema_errors(frontmatter, _HIVE_PROFILE_SCHEMA)
-        if message != "$: missing required property 'origin'"
+        if message != f"$: {_MISSING_PROPERTY.format(key='origin')}"
     ]
     if "origin" in frontmatter:
         errors.append("$.origin: assigned at acceptance, do not supply it")
     return errors
+
+
+# Shared with hive_authoring_errors, which filters on the exact message.
+_MISSING_PROPERTY = "missing required property {key!r}"
 
 
 def _schema_errors(
@@ -300,7 +304,7 @@ def _schema_errors(
         if isinstance(required, list):
             for key in required:
                 if key not in value:
-                    errors.append(f"{path}: missing required property {key!r}")
+                    errors.append(f"{path}: {_MISSING_PROPERTY.format(key=key)}")
         properties = schema.get("properties", {})
         if isinstance(properties, dict):
             if schema.get("additionalProperties") is False:

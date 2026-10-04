@@ -308,7 +308,7 @@ def test_create_concept_hive_profile_rejects_missing_fields_in_one_error(tmp_pat
     message = str(caught.value)
     for field in ("implementation", "applicability", "hive", "owner_repo", "authority", "governance"):
         assert field in message
-    assert "origin" not in message.replace("origin is assigned", "")
+    assert "$.origin" not in message and "'origin'" not in message
     assert not (bundle / "incomplete.md").exists()
 
 
@@ -325,6 +325,34 @@ def test_create_concept_hive_profile_accepts_complete_draft_without_origin(tmp_p
     fm = parse_concept(bundle / "plans" / "ok.md", bundle).frontmatter
     assert fm["subject_id"] == "concept/kb/plans/ok"
     assert fm["status"] == "draft" and "origin" not in fm
+
+
+def test_hive_authoring_errors_exempt_origin_only():
+    from okf_kit.core.validate import hive_authoring_errors
+
+    complete = {
+        "type": "Plan", "title": "T", "status": "draft", **HIVE_FIELDS,
+        "subject_id": "concept/kb/p",
+    }
+    assert hive_authoring_errors(complete) == []
+    origin = {"repo": "knowledge-hive", "path": "p", "commit": "a" * 40, "digest": "sha256:" + "b" * 64}
+    assert hive_authoring_errors({**complete, "origin": origin}) == [
+        "$.origin: assigned at acceptance, do not supply it"
+    ]
+    assert any("authority" in e for e in hive_authoring_errors({k: v for k, v in complete.items() if k != "authority"}))
+
+
+def test_create_concept_hive_profile_hints_when_defaulted_subject_id_is_invalid(tmp_path: Path):
+    _, bundle = _hub_and_clone(tmp_path)
+    _checkout_preview(bundle)
+    reg = BundleRegistry({"kb": bundle})
+    with pytest.raises(ValueError, match="pass a lowercase subject_id explicitly"):
+        tool_create_concept(
+            reg, "kb", "MyPlan", "Plan", "T", "d", RICH_BODY,
+            extra=dict(HIVE_FIELDS), git=GitBackend(reg),
+            expected_branch="preview", publication_profile="hive",
+        )
+    assert not (bundle / "MyPlan.md").exists()
 
 
 def test_create_concept_hive_profile_refuses_caller_origin(tmp_path: Path):
