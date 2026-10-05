@@ -392,8 +392,10 @@ class GitWriter:
           - ``"fast-forward"``: this checkout was behind; merged forward.
           - ``"ahead"``: this checkout has commits the hub lacks (normal only
             for a lane with local writers, e.g. a review lane between a
-            push and the hub observing it) — reported, never rewritten.
-          - ``"reset"``: diverged, but every one of this checkout's own
+            push and the hub observing it) and they are not all covered by a
+            preserve ref — reported, never rewritten.
+          - ``"reset"``: diverged or ahead (the hub was rewound onto an
+            ancestor of this checkout), but every one of this checkout's own
             commits is reachable from a ref matching ``preserve_ref_globs``
             (e.g. ``refs/okf/preview-before/*`` recorded by an admin
             rebuild) — so nothing this checkout held is actually lost by
@@ -492,7 +494,19 @@ class GitWriter:
                 "after": after.stdout if after.ok else None,
                 "hub_sha": hub_sha.stdout,
             }
-        if self._git("merge-base", "--is-ancestor", tracking, "HEAD").ok:
+        # Ahead or diverged. Resetting is safe only if every commit HEAD has
+        # that the hub lacks is already reachable from a preserved ref (e.g. an
+        # admin rebuild's refs/okf/preview-before/<ts>) — that ref is what
+        # makes this checkout's own history recoverable independent of a
+        # reset. Those refs live on the hub, not yet in this checkout, so
+        # fetch them by the same glob the caller will match against. A fetch
+        # failure here is not fatal — a stale but present local copy of an
+        # immutable, timestamp-named preserve ref is still safe to use — but
+        # it's surfaced in the detail below rather than silently falling
+        # through, so a caller can tell "no preserve refs exist yet" apart
+        # from "couldn't reach the hub to check".
+        is_ahead = self._git("merge-base", "--is-ancestor", tracking, "HEAD").ok
+        if is_ahead and not preserve_ref_globs:
             return {
                 "action": "ahead",
                 "lane": lane,
@@ -501,23 +515,27 @@ class GitWriter:
                 "after": before.stdout,
                 "hub_sha": hub_sha.stdout,
             }
-        # Diverged. Safe to reset only if every commit HEAD has that the hub
-        # lacks is already reachable from a preserved ref (e.g. an admin
-        # rebuild's refs/okf/preview-before/<ts>) — that ref is what makes
-        # this checkout's own history recoverable independent of a reset.
-        # Those refs live on the hub, not yet in this checkout, so fetch
-        # them by the same glob the caller will match against. A fetch
-        # failure here is not fatal — a stale but present local copy of an
-        # immutable, timestamp-named preserve ref is still safe to use —
-        # but it's surfaced in the detail below rather than silently
-        # falling through, so a caller can tell "no preserve refs exist
-        # yet" apart from "couldn't reach the hub to check".
         fetch_problems: list[str] = []
         for glob in preserve_ref_globs:
             fetched_glob = self._git("fetch", "--quiet", self.remote, f"+{glob}:{glob}")
             if not fetched_glob.ok:
                 fetch_problems.append(f"{glob}: {fetched_glob.detail}")
         safe = self._diverged_commits_are_preserved(tracking, preserve_ref_globs)
+        if is_ahead and not safe:
+            # Normal for a lane with local writers between a push and the hub
+            # observing it. Only when the hub was rewound (a revert that
+            # leaves nothing to rebuild) are the extra commits all preserved.
+            ahead: dict[str, Any] = {
+                "action": "ahead",
+                "lane": lane,
+                "branch": branch,
+                "before": before.stdout,
+                "after": before.stdout,
+                "hub_sha": hub_sha.stdout,
+            }
+            if fetch_problems:
+                ahead["detail"] = "preserve-ref fetch problems: " + "; ".join(fetch_problems)
+            return ahead
         problem_suffix = (
             f" (preserve-ref fetch problems: {'; '.join(fetch_problems)})" if fetch_problems else ""
         )
