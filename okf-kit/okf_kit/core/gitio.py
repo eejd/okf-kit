@@ -506,6 +506,15 @@ class GitWriter:
         # through, so a caller can tell "no preserve refs exist yet" apart
         # from "couldn't reach the hub to check".
         is_ahead = self._git("merge-base", "--is-ancestor", tracking, "HEAD").ok
+        if is_ahead and not preserve_ref_globs:
+            return {
+                "action": "ahead",
+                "lane": lane,
+                "branch": branch,
+                "before": before.stdout,
+                "after": before.stdout,
+                "hub_sha": hub_sha.stdout,
+            }
         fetch_problems: list[str] = []
         for glob in preserve_ref_globs:
             fetched_glob = self._git("fetch", "--quiet", self.remote, f"+{glob}:{glob}")
@@ -516,7 +525,7 @@ class GitWriter:
             # Normal for a lane with local writers between a push and the hub
             # observing it. Only when the hub was rewound (a revert that
             # leaves nothing to rebuild) are the extra commits all preserved.
-            return {
+            ahead: dict[str, Any] = {
                 "action": "ahead",
                 "lane": lane,
                 "branch": branch,
@@ -524,6 +533,9 @@ class GitWriter:
                 "after": before.stdout,
                 "hub_sha": hub_sha.stdout,
             }
+            if fetch_problems:
+                ahead["detail"] = "preserve-ref fetch problems: " + "; ".join(fetch_problems)
+            return ahead
         problem_suffix = (
             f" (preserve-ref fetch problems: {'; '.join(fetch_problems)})" if fetch_problems else ""
         )

@@ -216,9 +216,13 @@ def test_converge_resets_when_hub_is_rewound_onto_a_preserved_ancestor(tmp_path:
 
 
 def test_converge_stays_ahead_when_extra_commits_are_not_preserved(tmp_path: Path):
+    """A preserve ref exists but covers a different commit: the checkout's own
+    commit is NOT recoverable elsewhere, so it must not be reset away."""
     hub, _clone, review = _preview_review_clone(tmp_path)
     old_tip = _push_draft(review)
-    _run(hub, "update-ref", "refs/heads/preview", _run(hub, "rev-parse", "refs/heads/main"))
+    base = _run(hub, "rev-parse", "refs/heads/main")
+    _run(hub, "update-ref", f"refs/okf/preview-before/{int(time.time())}", base)
+    _run(hub, "update-ref", "refs/heads/preview", base)
     writer = GitWriter.discover(review)
     assert writer is not None
     result = writer.converge(
@@ -226,6 +230,7 @@ def test_converge_stays_ahead_when_extra_commits_are_not_preserved(tmp_path: Pat
     )
     assert result["action"] == "ahead"
     assert _run(review, "rev-parse", "HEAD") == old_tip
+    assert (review / "draft.md").exists()
 
 
 def test_converge_diverged_resets_when_preserved(tmp_path: Path):
