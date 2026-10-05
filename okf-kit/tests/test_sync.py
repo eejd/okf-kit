@@ -170,6 +170,64 @@ def test_converge_diverged_with_preserve_glob_matching_nothing_refuses(tmp_path:
     assert _run(review, "rev-parse", "HEAD") == local_sha
 
 
+def _preview_review_clone(tmp_path: Path) -> tuple[Path, Path, Path]:
+    hub, clone = _hub_and_clone(tmp_path, branch="main")
+    _run(hub, "update-ref", "refs/heads/preview", "refs/heads/main")
+    review = clone.parent / "review"
+    subprocess.run(
+        ["git", "clone", "--branch", "preview", str(hub), str(review)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return hub, clone, review
+
+
+def _push_draft(review: Path) -> str:
+    (review / "draft.md").write_text("# draft\n", encoding="utf-8")
+    _run(review, "add", ".")
+    _run(review, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "draft")
+    tip = _run(review, "rev-parse", "HEAD")
+    _run(review, "push", "origin", "HEAD:refs/heads/preview")
+    return tip
+
+
+def test_converge_resets_when_hub_is_rewound_onto_a_preserved_ancestor(tmp_path: Path):
+    """Reverting every candidate rewinds the hub's preview onto main, an ANCESTOR
+    of the serving checkout. The checkout is then "ahead", but its extra commit
+    is recorded under refs/okf/preview-before/, so following the hub loses
+    nothing. Without this the lane refuses every write until someone resets
+    its volume by hand."""
+    hub, _clone, review = _preview_review_clone(tmp_path)
+    old_tip = _push_draft(review)
+    base = _run(hub, "rev-parse", "refs/heads/main")
+    _run(hub, "update-ref", f"refs/okf/preview-before/{int(time.time())}", old_tip)
+    _run(hub, "update-ref", "refs/heads/preview", base)
+    writer = GitWriter.discover(review)
+    assert writer is not None
+    result = writer.converge(
+        "preview", lane="preview", preserve_ref_globs=("refs/okf/preview-before/*",)
+    )
+    assert result["action"] == "reset"
+    assert result["after"] == base
+    assert _run(review, "rev-parse", "HEAD") == base
+    assert not (review / "draft.md").exists()
+    assert _run(review, "rev-parse", result["rescue_ref"]) == old_tip
+
+
+def test_converge_stays_ahead_when_extra_commits_are_not_preserved(tmp_path: Path):
+    hub, _clone, review = _preview_review_clone(tmp_path)
+    old_tip = _push_draft(review)
+    _run(hub, "update-ref", "refs/heads/preview", _run(hub, "rev-parse", "refs/heads/main"))
+    writer = GitWriter.discover(review)
+    assert writer is not None
+    result = writer.converge(
+        "preview", lane="preview", preserve_ref_globs=("refs/okf/preview-before/*",)
+    )
+    assert result["action"] == "ahead"
+    assert _run(review, "rev-parse", "HEAD") == old_tip
+
+
 def test_converge_diverged_resets_when_preserved(tmp_path: Path):
     """A serving checkout whose HEAD is a preview tip an admin rebuild has
     since recorded and moved past (ADR-0509 F4's refs/okf/preview-before/)
