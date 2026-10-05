@@ -54,7 +54,7 @@ CREATE_DESC = (
     "When the server enforces the hive publication profile, governed types (ADR, Decision, Plan, "
     "Architecture, Contract, Runbook, Epic) must pass governance in `extra`; subject_id, "
     "owner_repo, authority, implementation, applicability and hive are optional but validated "
-    "when supplied, and the result's `warnings` names recommended ones you omitted (a successor "
+    "when supplied, and the result's `warnings` names the recommended ones you omitted (subject_id, owner_repo, authority; a successor "
     "should reuse the subject_id of the concept it supersedes). origin is assigned when a human "
     "accepts the draft and must not be supplied. Every invalid field is reported in one error and "
     "nothing is written."
