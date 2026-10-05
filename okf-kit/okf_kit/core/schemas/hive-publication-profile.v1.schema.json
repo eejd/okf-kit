@@ -3,7 +3,12 @@
   "$id": "https://hive.local/schemas/hive-publication-profile.schema.json",
   "title": "Hive OKF publication metadata",
   "type": "object",
-  "required": ["type", "title", "status", "governance", "implementation", "applicability", "hive", "owner_repo", "subject_id", "authority", "origin"],
+  "required": ["type", "title", "status", "origin"],
+  "if": {
+    "properties": {"type": {"enum": ["ADR", "Decision", "Plan", "Architecture", "Contract", "Runbook", "Epic"]}},
+    "required": ["type"]
+  },
+  "then": {"required": ["governance"]},
   "properties": {
     "type": {
       "enum": ["ADR", "Decision", "Plan", "Research", "Architecture", "Contract", "Runbook", "Evidence", "Epic", "Hive", "Service", "MCP Server", "Reference"]
@@ -40,7 +45,20 @@
     "evidence-for": {"$ref": "#/$defs/relations"},
     "supersedes": {"$ref": "#/$defs/relations"},
     "generated": {"type": ["boolean", "object"]},
-    "verified": {"type": ["boolean", "object", "string"]},
+    "verified": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["by", "at", "digest"],
+        "additionalProperties": false,
+        "properties": {
+          "by": {"type": "string", "pattern": "^(human|agent|process):[^\\s]+$"},
+          "at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}"},
+          "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        }
+      }
+    },
     "sources": {"type": "array", "items": {"type": "string"}}
   },
   "$defs": {

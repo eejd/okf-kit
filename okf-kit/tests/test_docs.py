@@ -89,7 +89,7 @@ def test_hive_conformance_fixture_contract_is_documented():
     text = (WIKI / "core" / "validate.md").read_text(encoding="utf-8")
     assert "canonically owned by\nknowledge-hive" in text
     assert "byte-identical" in text
-    assert "faf157d80fadb4269807e020ae96c42aba37c6b8cbd959eb0b99c6bc9d3e28cc" in text
+    assert "6243fb8ca565de66da583275369bdf0254967ebad032c524372ae4c18f907f0f" in text
     assert "both repositories must\nassert and execute that exact digest" in text
 
 

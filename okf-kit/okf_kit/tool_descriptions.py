@@ -51,10 +51,13 @@ CREATE_DESC = (
     "concrete Markdown with relevant headings, examples, caveats, and bundle-relative links such "
     "as [Users](/tables/users.md); do not create placeholders or generic filler. Returns the "
     "created cid and path; rejects thin bodies, invalid ids, path escapes, and existing files. "
-    "When the server enforces the hive publication profile, pass governance, implementation, "
-    "applicability, hive, owner_repo and authority in `extra` (subject_id defaults to "
-    "concept/<bundle>/<cid>); origin is assigned when a human accepts the draft and must not "
-    "be supplied. Every missing or invalid field is reported in one error and nothing is written."
+    "When the server enforces the hive publication profile, governed types (ADR, Decision, Plan, "
+    "Architecture, Contract, Runbook, Epic) must pass governance in `extra`; subject_id, "
+    "owner_repo, authority, implementation, applicability and hive are optional but validated "
+    "when supplied, and the result's `warnings` names the recommended ones you omitted (subject_id, owner_repo, authority; a successor "
+    "should reuse the subject_id of the concept it supersedes). origin is assigned when a human "
+    "accepts the draft and must not be supplied. Every invalid field is reported in one error and "
+    "nothing is written."
 )
 
 INIT_DESC = (

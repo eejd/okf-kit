@@ -1,5 +1,5 @@
 {
-  "schema_version": "hive-publication-conformance/v1",
+  "schema_version": "hive-publication-conformance/v2",
   "base": {
     "type": "ADR",
     "title": "Canonical decision",
@@ -59,33 +59,33 @@
       "remove": "governance"
     },
     {
-      "name": "missing-implementation",
-      "valid": false,
+      "name": "omitted-implementation",
+      "valid": true,
       "remove": "implementation"
     },
     {
-      "name": "missing-applicability",
-      "valid": false,
+      "name": "omitted-applicability",
+      "valid": true,
       "remove": "applicability"
     },
     {
-      "name": "missing-hive",
-      "valid": false,
+      "name": "omitted-hive",
+      "valid": true,
       "remove": "hive"
     },
     {
-      "name": "missing-owner-repo",
-      "valid": false,
+      "name": "omitted-owner-repo",
+      "valid": true,
       "remove": "owner_repo"
     },
     {
-      "name": "missing-subject-id",
-      "valid": false,
+      "name": "omitted-subject-id",
+      "valid": true,
       "remove": "subject_id"
     },
     {
-      "name": "missing-authority",
-      "valid": false,
+      "name": "omitted-authority",
+      "valid": true,
       "remove": "authority"
     },
     {
@@ -180,6 +180,56 @@
             "reference"
           ]
         }
+      }
+    },
+    {
+      "name": "minimal-governed",
+      "valid": true,
+      "remove": [
+        "implementation",
+        "applicability",
+        "hive",
+        "owner_repo",
+        "subject_id",
+        "authority"
+      ]
+    },
+    {
+      "name": "minimal-non-governed",
+      "valid": true,
+      "remove": [
+        "implementation",
+        "applicability",
+        "hive",
+        "owner_repo",
+        "subject_id",
+        "authority",
+        "governance"
+      ],
+      "set": {
+        "type": "Evidence"
+      }
+    },
+    {
+      "name": "governed-type-requires-governance",
+      "valid": false,
+      "remove": "governance",
+      "set": {
+        "type": "Plan"
+      }
+    },
+    {
+      "name": "invalid-implementation",
+      "valid": false,
+      "set": {
+        "implementation": "done"
+      }
+    },
+    {
+      "name": "invalid-governance",
+      "valid": false,
+      "set": {
+        "governance": "approved"
       }
     }
   ]

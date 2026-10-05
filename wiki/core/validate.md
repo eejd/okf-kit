@@ -22,9 +22,10 @@ Reserved files get special handling: a root `index.md` is checked only for `okf_
 
 `validate_bundle(root, profile="hive")` additionally checks each concept against the
 versioned `hive-publication-profile.v1.schema.json` copied byte-for-byte from the canonical
-knowledge-hive contract. It requires the controlled type, title, publication/governance/
-implementation/applicability axes, hive, owner repository, subject identity, authority, and
-an origin with an exact 40-character lowercase Git commit and `sha256:` digest. Typed
+knowledge-hive contract. It requires the controlled type, title, status, and an origin with an exact 40-character
+lowercase Git commit and `sha256:` digest, plus `governance` for governed types (ADR, Decision,
+Plan, Architecture, Contract, Runbook, Epic). The implementation, applicability, hive, owner
+repository, subject identity and authority fields are optional but validated when present. Typed
 relations are top-level lists of unique, non-empty targets; the legacy nested `relations`
 mapping is rejected.
 
@@ -35,10 +36,10 @@ bundle, or establish cross-bundle graph connectivity. It therefore always return
 validator must clear those checks before publication; okf-kit never claims that concept-level
 validation alone makes a bundle publishable.
 
-The shared `hive-publication-conformance.v1.json` case corpus is canonically owned by
-knowledge-hive. okf-kit keeps a byte-identical execution copy under `tests/fixtures/`. Version v1
+The shared `hive-publication-conformance.v2.json` case corpus is canonically owned by
+knowledge-hive. okf-kit keeps a byte-identical execution copy under `tests/fixtures/`. Version v2
 is pinned to SHA-256
-`faf157d80fadb4269807e020ae96c42aba37c6b8cbd959eb0b99c6bc9d3e28cc`; both repositories must
+`6243fb8ca565de66da583275369bdf0254967ebad032c524372ae4c18f907f0f`; both repositories must
 assert and execute that exact digest. Changing any case creates a new reviewed contract revision
 and requires synchronized copies and digest assertions in both repositories.
 

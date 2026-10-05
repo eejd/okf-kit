@@ -92,6 +92,8 @@ def _canonical_upstream_ref(upstream_ref: str) -> tuple[str, str]:
 
 
 _CREATE_DESC = tool_descriptions.CREATE_DESC
+# Optional in the hive profile; omitting them is reported, never refused.
+_HIVE_RECOMMENDED_FIELDS = ("subject_id", "owner_repo", "authority")
 _GRAPH_DESC = tool_descriptions.GRAPH_DESC
 _INIT_DESC = tool_descriptions.INIT_DESC
 _LIST_BUNDLES_DESC = tool_descriptions.LIST_BUNDLES_DESC
@@ -645,14 +647,16 @@ def tool_create_concept(
     file is committed and pushed; the git outcome is reported in the result's
     ``git`` key. A failed commit or push undoes the write and fails the call.
 
-    With the ``hive`` publication profile a draft write must also carry the
-    profile's authoring fields (everything but ``origin``, which acceptance
-    assigns); ``subject_id`` defaults to ``concept/<bundle>/<cid>``. Every
+    With the ``hive`` publication profile a draft write must meet the profile's
+    required set (``governance`` for governed types; ``origin`` is assigned at
+    acceptance). Optional profile fields are validated when supplied, and the
+    result's ``warnings`` names recommended ones that were omitted. Every
     problem is reported in one error and nothing is written.
     """
     started_at = time.monotonic()
     ok = False
     git_outcome: dict[str, Any] | None = None
+    omitted: list[str] = []
     try:
         if git is not None:
             if expected_branch is None:
@@ -678,22 +682,18 @@ def tool_create_concept(
                 "at": datetime.now(UTC).isoformat(),
             }
             if publication_profile == "hive":
-                defaulted_subject = "subject_id" not in extra_fm
-                extra_fm.setdefault("subject_id", f"concept/{bundle}/{cid}")
                 authored: dict[str, Any] = {"type": type, "title": title, **extra_fm}
                 if description:
                     authored["description"] = description
                 problems = hive_authoring_errors(authored)
                 if problems:
-                    if defaulted_subject and any("subject_id" in item for item in problems):
-                        problems.append(
-                            "subject_id was defaulted from the bundle and cid; "
-                            "pass a lowercase subject_id explicitly"
-                        )
                     raise ValueError(
                         "concept does not meet the hive publication profile: "
                         + "; ".join(problems)
                     )
+                omitted = [
+                    name for name in _HIVE_RECOMMENDED_FIELDS if name not in extra_fm
+                ]
         path = create_concept(
             reg.get(bundle),
             cid,
@@ -705,6 +705,11 @@ def tool_create_concept(
             extra=extra_fm or None,
         )
         result: dict[str, Any] = {"created": True, "cid": cid, "path": str(path)}
+        if omitted:
+            result["warnings"] = [
+                "recommended hive profile fields omitted: " + ", ".join(omitted)
+                + " (subject_id: reuse the id of a concept this one supersedes)"
+            ]
         git_outcome = _git_commit_result(
             git,
             bundle,
