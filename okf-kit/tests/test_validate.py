@@ -11,8 +11,8 @@ import okf_kit.core.validate as validate_module
 import yaml
 from okf_kit.core.validate import Finding, Report, validate_bundle
 
-HIVE_PUBLICATION_CONFORMANCE_V1_SHA256 = (
-    "faf157d80fadb4269807e020ae96c42aba37c6b8cbd959eb0b99c6bc9d3e28cc"
+HIVE_PUBLICATION_CONFORMANCE_V2_SHA256 = (
+    "6243fb8ca565de66da583275369bdf0254967ebad032c524372ae4c18f907f0f"
 )
 
 
@@ -51,22 +51,23 @@ def test_hive_profile_schema_copy_matches_canonical_contract():
     )
     payload = schema_path.read_bytes()
     assert hashlib.sha256(payload).hexdigest() == (
-        "0abc13242fc82eec2a11bbc7936a3f36518a6449a840afe782a1be18f53b8a19"
+        "f3683a29ee7057b235518d2d3a9c382637454b4e6f01e5d933f2b71dfe849a1d"
     )
     assert json.loads(payload) == validate_module._HIVE_PROFILE_SCHEMA
 
 
 def test_hive_profile_shared_conformance_cases(tmp_path):
-    fixture_path = Path(__file__).with_name("fixtures") / "hive-publication-conformance.v1.json"
+    fixture_path = Path(__file__).with_name("fixtures") / "hive-publication-conformance.v2.json"
     fixture_bytes = fixture_path.read_bytes()
-    assert hashlib.sha256(fixture_bytes).hexdigest() == HIVE_PUBLICATION_CONFORMANCE_V1_SHA256
+    assert hashlib.sha256(fixture_bytes).hexdigest() == HIVE_PUBLICATION_CONFORMANCE_V2_SHA256
     fixture = json.loads(fixture_bytes)
-    assert fixture["schema_version"] == "hive-publication-conformance/v1"
+    assert fixture["schema_version"] == "hive-publication-conformance/v2"
 
     for case in fixture["cases"]:
         metadata = copy.deepcopy(fixture["base"])
-        if removed := case.get("remove"):
-            metadata.pop(removed)
+        removed = case.get("remove", [])
+        for field in [removed] if isinstance(removed, str) else removed:
+            metadata.pop(field)
         for dotted_path, value in case.get("set", {}).items():
             target = metadata
             segments = dotted_path.split(".")

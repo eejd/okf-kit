@@ -295,33 +295,52 @@ HIVE_FIELDS = {
 }
 
 
-def test_create_concept_hive_profile_rejects_missing_fields_in_one_error(tmp_path: Path):
+def test_create_concept_hive_profile_rejects_invalid_fields_in_one_error(tmp_path: Path):
     _, bundle = _hub_and_clone(tmp_path)
     _checkout_preview(bundle)
     reg = BundleRegistry({"kb": bundle})
     with pytest.raises(ValueError, match="hive publication profile") as caught:
         tool_create_concept(
             reg, "kb", "incomplete", "Plan", "T", "d", RICH_BODY,
-            extra={"governance": "bogus"}, git=GitBackend(reg),
+            extra={"implementation": "done", "authority": "bogus"}, git=GitBackend(reg),
             expected_branch="preview", publication_profile="hive",
         )
     message = str(caught.value)
-    for field in ("implementation", "applicability", "hive", "owner_repo", "authority", "governance"):
+    for field in ("governance", "implementation", "authority"):
         assert field in message
-    assert "$.origin" not in message and "'origin'" not in message
+    assert "origin" not in message
     assert not (bundle / "incomplete.md").exists()
 
 
-def test_create_concept_hive_profile_accepts_complete_draft_without_origin(tmp_path: Path):
+def test_create_concept_hive_profile_governance_only_required_for_governed_types(tmp_path: Path):
+    hub, bundle = _hub_and_clone(tmp_path)
+    _checkout_preview(bundle)
+    reg = BundleRegistry({"kb": bundle})
+    with pytest.raises(ValueError, match="governance"):
+        tool_create_concept(
+            reg, "kb", "plans/no-gov", "Plan", "T", "d", RICH_BODY,
+            git=GitBackend(reg), expected_branch="preview", publication_profile="hive",
+        )
+    res = tool_create_concept(
+        reg, "kb", "evidence/minimal", "Evidence", "Measured", "a minimal draft", RICH_BODY,
+        git=GitBackend(reg), expected_branch="preview", publication_profile="hive",
+    )
+    assert res["git"]["pushed"] is True
+    assert "subject_id" in res["warnings"][0] and "owner_repo" in res["warnings"][0]
+    fm = parse_concept(bundle / "evidence" / "minimal.md", bundle).frontmatter
+    assert fm["status"] == "draft" and "origin" not in fm and "subject_id" not in fm
+
+
+def test_create_concept_hive_profile_complete_draft_has_no_warnings(tmp_path: Path):
     hub, bundle = _hub_and_clone(tmp_path)
     _checkout_preview(bundle)
     reg = BundleRegistry({"kb": bundle})
     res = tool_create_concept(
         reg, "kb", "plans/ok", "Plan", "OK", "a complete draft", RICH_BODY,
-        extra=dict(HIVE_FIELDS), git=GitBackend(reg),
+        extra={**HIVE_FIELDS, "subject_id": "concept/kb/plans/ok"}, git=GitBackend(reg),
         expected_branch="preview", publication_profile="hive",
     )
-    assert res["git"]["pushed"] is True
+    assert res["git"]["pushed"] is True and "warnings" not in res
     fm = parse_concept(bundle / "plans" / "ok.md", bundle).frontmatter
     assert fm["subject_id"] == "concept/kb/plans/ok"
     assert fm["status"] == "draft" and "origin" not in fm
@@ -339,20 +358,9 @@ def test_hive_authoring_errors_exempt_origin_only():
     assert hive_authoring_errors({**complete, "origin": origin}) == [
         "$.origin: assigned at acceptance, do not supply it"
     ]
-    assert any("authority" in e for e in hive_authoring_errors({k: v for k, v in complete.items() if k != "authority"}))
-
-
-def test_create_concept_hive_profile_hints_when_defaulted_subject_id_is_invalid(tmp_path: Path):
-    _, bundle = _hub_and_clone(tmp_path)
-    _checkout_preview(bundle)
-    reg = BundleRegistry({"kb": bundle})
-    with pytest.raises(ValueError, match="pass a lowercase subject_id explicitly"):
-        tool_create_concept(
-            reg, "kb", "MyPlan", "Plan", "T", "d", RICH_BODY,
-            extra=dict(HIVE_FIELDS), git=GitBackend(reg),
-            expected_branch="preview", publication_profile="hive",
-        )
-    assert not (bundle / "MyPlan.md").exists()
+    assert hive_authoring_errors({k: v for k, v in complete.items() if k != "authority"}) == []
+    assert any("governance" in e for e in hive_authoring_errors({k: v for k, v in complete.items() if k != "governance"}))
+    assert any("authority" in e for e in hive_authoring_errors({**complete, "authority": "bogus"}))
 
 
 def test_create_concept_hive_profile_refuses_caller_origin(tmp_path: Path):

@@ -299,6 +299,15 @@ def _schema_errors(
             for index, item in enumerate(value):
                 errors.extend(_schema_errors(item, item_schema, f"{path}[{index}]"))
 
+    condition = schema.get("if")
+    consequence = schema.get("then")
+    if (
+        isinstance(condition, dict)
+        and isinstance(consequence, dict)
+        and not _schema_errors(value, condition, path)
+    ):
+        errors.extend(_schema_errors(value, consequence, path))
+
     if isinstance(value, dict):
         required = schema.get("required", [])
         if isinstance(required, list):
